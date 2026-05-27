@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import parse, { domToReact, HTMLReactParserOptions, Element } from "html-react-parser";
 import { Course, Lesson } from "@/lib/types";
 import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw } from "lucide-react";
 import CodeEditor from "./CodeEditor";
@@ -12,18 +13,166 @@ interface Props {
   onTabChange: (tab: "desc" | "qa" | "author") => void;
 }
 
-// Detect language from lesson content (simple heuristic)
-function detectLanguage(content: string): string {
-  if (content.includes("<html") || content.includes("<div") || content.includes("<p>")) return "html";
-  if (content.includes("{") && content.includes(":") && !content.includes("function")) return "css";
+// Detect language from lesson template (simple heuristic)
+function detectLanguage(code: string): string {
+  if (code.includes("<html") || code.includes("<div") || code.includes("<p>")) return "html";
+  if (code.includes("{") && code.includes(":") && !code.includes("function")) return "css";
   return "javascript";
 }
 
 export default function LessonContent({ lesson, course, activeTab, onTabChange }: Props) {
-  const defaultLanguage = lesson.language || detectLanguage(lesson.content ?? "");
+  const defaultLanguage = lesson.language || detectLanguage(lesson.template ?? "");
   const [selectedLanguage, setSelectedLanguage] = useState<"javascript" | "html" | "css">(defaultLanguage as "javascript" | "html" | "css");
-  const [userCode, setUserCode] = useState(lesson.content ?? "");
+  const [userCode, setUserCode] = useState(lesson.template ?? "");
   const [runKey, setRunKey] = useState(0);
+  const [editorHeight, setEditorHeight] = useState(50); // percentage
+  const dividerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const verticalDividerRef = useRef<HTMLDivElement>(null);
+  const [leftWidth, setLeftWidth] = useState(50); // percentage for left column
+  const leftWidthRef = useRef(leftWidth);
+  // Drag handling using pointer events for reliability
+  const isDraggingRef = useRef(false);
+  const startYRef = useRef(0);
+  const startHeightRef = useRef<number | null>(null);
+  const pointerIdRef = useRef<number | null>(null);
+  const editorHeightRef = useRef(editorHeight);
+
+  // keep a ref copy of editorHeight so the pointer handlers don't close over stale values
+  useEffect(() => {
+    editorHeightRef.current = editorHeight;
+  }, [editorHeight]);
+
+  useEffect(() => {
+    leftWidthRef.current = leftWidth;
+  }, [leftWidth]);
+
+  useEffect(() => {
+    // Use an effect that mounts once to avoid reattaching listeners during drag
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isDraggingRef.current || !containerRef.current || startHeightRef.current == null) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const delta = e.clientY - startYRef.current;
+      const newHeightPx = (startHeightRef.current / 100) * rect.height + delta;
+      const newHeight = (newHeightPx / rect.height) * 100;
+      if (newHeight >= 10 && newHeight <= 90) setEditorHeight(newHeight);
+    };
+
+    const finishDrag = () => {
+      isDraggingRef.current = false;
+      startHeightRef.current = null;
+      pointerIdRef.current = null;
+      (document.body as HTMLBodyElement).style.userSelect = "auto";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    };
+
+    const onPointerUp = (e?: PointerEvent) => {
+      // try to release pointer capture if possible
+      try {
+        if (pointerIdRef.current != null && dividerRef.current?.releasePointerCapture) {
+          dividerRef.current.releasePointerCapture(pointerIdRef.current);
+        }
+      } catch (err) {
+        // ignore
+      }
+      finishDrag();
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      // start drag
+      isDraggingRef.current = true;
+      startYRef.current = e.clientY;
+      startHeightRef.current = editorHeightRef.current ?? editorHeight;
+      pointerIdRef.current = (e as any).pointerId ?? null;
+      (document.body as HTMLBodyElement).style.userSelect = "none";
+
+      // ensure we continue to receive pointer events even if pointer moves outside the divider
+      try {
+        if (dividerRef.current?.setPointerCapture && pointerIdRef.current != null) {
+          dividerRef.current.setPointerCapture(pointerIdRef.current);
+        }
+      } catch (err) {
+        // ignore if not supported
+      }
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    };
+
+    const divider = dividerRef.current;
+    if (divider) divider.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      if (divider) divider.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Vertical divider (left/right) pointer handling
+  useEffect(() => {
+    const isDraggingVRef = { current: false } as { current: boolean };
+    const startXRef = { current: 0 } as { current: number };
+    const startLeftRef = { current: 0 } as { current: number };
+    const pointerIdVRef = { current: null as number | null };
+
+    const onMove = (e: PointerEvent) => {
+      if (!isDraggingVRef.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const delta = e.clientX - startXRef.current;
+      const newLeftPx = (startLeftRef.current / 100) * rect.width + delta;
+      const newLeft = (newLeftPx / rect.width) * 100;
+      if (newLeft >= 15 && newLeft <= 85) setLeftWidth(newLeft);
+    };
+
+    const finish = () => {
+      isDraggingVRef.current = false;
+      pointerIdVRef.current = null;
+      (document.body as HTMLBodyElement).style.userSelect = "auto";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+
+    const onUp = () => {
+      try {
+        if (pointerIdVRef.current != null && verticalDividerRef.current?.releasePointerCapture) {
+          verticalDividerRef.current.releasePointerCapture(pointerIdVRef.current);
+        }
+      } catch {}
+      finish();
+    };
+
+    const onDown = (e: PointerEvent) => {
+      isDraggingVRef.current = true;
+      startXRef.current = e.clientX;
+      startLeftRef.current = leftWidthRef.current ?? leftWidth;
+      pointerIdVRef.current = (e as any).pointerId ?? null;
+      (document.body as HTMLBodyElement).style.userSelect = "none";
+      try {
+        if (verticalDividerRef.current?.setPointerCapture && pointerIdVRef.current != null) {
+          verticalDividerRef.current.setPointerCapture(pointerIdVRef.current);
+        }
+      } catch {}
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    };
+
+    const vdiv = verticalDividerRef.current;
+    if (vdiv) vdiv.addEventListener("pointerdown", onDown);
+    return () => {
+      if (vdiv) vdiv.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const tabs = [
     { id: "desc" as const, label: "Mô tả", icon: BookOpen },
@@ -51,9 +200,9 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
 
       {/* Tab: Mô tả */}
       {activeTab === "desc" && (
-        <div className="flex-1 overflow-hidden flex">
-          {/* Left: lesson info */}
-          <div className="flex-1 overflow-y-auto p-6">
+        <div ref={containerRef} className="flex-1 overflow-hidden flex flex-row">
+          {/* Left: Content */}
+          <div style={{ width: `${leftWidth}%` }} className="overflow-y-auto border-r border-slate-100 p-6">
             <h2 className="text-xl font-bold text-slate-800 mb-3">{lesson.title}</h2>
 
             {/* Stats */}
@@ -91,65 +240,142 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
               </div>
             </div>
 
-            {/* Code editor for lesson content */}
+            {/* Lesson content - displayed as formatted HTML/text */}
             {lesson.content && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold text-slate-700">Nội dung bài học</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => { setUserCode(lesson.content); setRunKey(k => k + 1); }}
-                      className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600"
-                    >
-                      <RotateCcw size={12} /> Reset
-                    </button>
-                    <button
-                      onClick={() => setRunKey(k => k + 1)}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-xs rounded-md font-semibold"
-                    >
-                      <Play size={11} fill="white" /> Chạy
-                    </button>
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-slate-700 mb-3">Nội dung bài học</h3>
+                <div className="prose prose-sm max-w-none text-slate-600 leading-relaxed">
+                  <style>{`
+                    .lesson-content h1 { font-size: 1.875rem; font-weight: 700; margin: 1.5rem 0 1rem; color: #1e293b; }
+                    .lesson-content h2 { font-size: 1.5rem; font-weight: 700; margin: 1.25rem 0 0.75rem; color: #334155; }
+                    .lesson-content h3 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; color: #475569; }
+                    .lesson-content h4 { font-size: 1.1rem; font-weight: 600; margin: 0.75rem 0 0.5rem; color: #475569; }
+                    .lesson-content h5, .lesson-content h6 { font-size: 1rem; font-weight: 600; margin: 0.5rem 0; color: #475569; }
+                    .lesson-content p { margin: 0.75rem 0; line-height: 1.6; }
+                    .lesson-content a { color: #2563eb; text-decoration: underline; }
+                    .lesson-content a:hover { color: #1d4ed8; }
+                    .lesson-content ul, .lesson-content ol { margin: 1rem 0; padding-left: 2rem; }
+                    .lesson-content li { margin: 0.5rem 0; }
+                    .lesson-content code { background: #f1f5f9; color: #e11d48; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-family: 'Courier New', monospace; font-size: 0.875em; }
+                    .lesson-content pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 1rem 0; }
+                    .lesson-content pre code { background: none; color: inherit; padding: 0; }
+                    .lesson-content blockquote { border-left: 4px solid #3b82f6; padding-left: 1rem; margin: 1rem 0; color: #64748b; font-style: italic; }
+                    .lesson-content table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+                    .lesson-content th, .lesson-content td { border: 1px solid #cbd5e1; padding: 0.75rem; text-align: left; }
+                    .lesson-content th { background: #f1f5f9; font-weight: 600; }
+                    .lesson-content strong, .lesson-content b { font-weight: 700; color: #1e293b; }
+                    .lesson-content em, .lesson-content i { font-style: italic; }
+                  `}</style>
+                  <div className="lesson-content">
+                    {parse(lesson.content, {
+  replace(node) {
+    if (node instanceof Element && node.name === "pre") {
+      const code = node.children
+        .map((c: any) => c.type === "text" ? c.data : c.children?.map((cc: any) => cc.data ?? "").join("") ?? "")
+        .join("");
+      return (
+        <pre
+          onClick={() => {
+            setUserCode(code.trimEnd());
+            setRunKey(k => k + 1);  // tự chạy luôn sau khi copy
+          }}
+          title="Bấm để copy vào editor"
+          style={{
+            background: "#1e293b", color: "#e2e8f0", padding: "1rem",
+            borderRadius: "0.5rem", cursor: "pointer", position: "relative",
+            border: "2px solid transparent", transition: "border-color 0.2s",
+          }}
+          onMouseEnter={e => (e.currentTarget.style.borderColor = "#3b82f6")}
+          onMouseLeave={e => (e.currentTarget.style.borderColor = "transparent")}
+        >
+          <span style={{ position: "absolute", top: 6, right: 8, fontSize: 10, color: "#64748b" }}>
+            ▶ Bấm để chạy
+          </span>
+          {domToReact(node.children as any)}
+        </pre>
+      );
+    }
+  },
+})}
                   </div>
-                </div>
-
-                <div className="editor-container">
-                  <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3">
-                    <div className="w-3 h-3 rounded-full bg-red-400" />
-                    <div className="w-3 h-3 rounded-full bg-yellow-400" />
-                    <div className="w-3 h-3 rounded-full bg-green-400" />
-                    <select
-                      value={selectedLanguage}
-                      onChange={(e) => setSelectedLanguage(e.target.value as "javascript" | "html" | "css")}
-                      className="ml-2 bg-transparent text-slate-300 text-xs font-medium border border-slate-500 rounded px-2 py-1 cursor-pointer hover:border-slate-400 focus:outline-none focus:border-blue-400"
-                    >
-                      <option value="javascript">JavaScript (script.js)</option>
-                      <option value="html">HTML (index.html)</option>
-                      <option value="css">CSS (style.css)</option>
-                    </select>
-                  </div>
-                  <CodeEditor
-                    value={userCode}
-                    language={selectedLanguage}
-                    onChange={setUserCode}
-                  />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Right: live preview */}
-          <div className="w-[44%] min-w-[340px] border-l border-slate-100 flex flex-col">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0">
-              <span className="text-xs font-semibold text-slate-500">KẾT QUẢ</span>
-              <button
-                onClick={() => setRunKey(k => k + 1)}
-                className="text-xs text-blue-600 hover:underline flex items-center gap-1"
-              >
-                <Play size={10} /> Chạy lại
-              </button>
+          {/* Vertical divider: draggable to resize left/right */}
+          <div
+            ref={verticalDividerRef}
+            className="w-2 cursor-col-resize shrink-0 transition-colors"
+            style={{ background: 'transparent' }}
+          />
+
+          {/* Right: Code Editor + Preview (vertical split) */}
+          <div style={{ width: `${100 - leftWidth}%` }} className="overflow-hidden flex flex-col border-l border-slate-100">
+            {/* Top: Code Editor */}
+            <div style={{ height: `${editorHeight}%` }} className="overflow-hidden flex flex-col border-b border-slate-100">
+              <div className="flex items-center justify-between px-4 py-2 shrink-0 bg-white border-b border-slate-100">
+                <span className="text-sm font-semibold text-slate-700">Soạn thảo code</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setUserCode(lesson.template ?? ""); setRunKey(k => k + 1); }}
+                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600"
+                  >
+                    <RotateCcw size={12} /> Reset
+                  </button>
+                  <button
+                    onClick={() => setRunKey(k => k + 1)}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-xs rounded-md font-semibold"
+                  >
+                    <Play size={11} fill="white" /> Chạy
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-[#1e293b] px-4 py-2 flex items-center gap-3 shrink-0">
+                <div className="w-3 h-3 rounded-full bg-red-400" />
+                <div className="w-3 h-3 rounded-full bg-yellow-400" />
+                <div className="w-3 h-3 rounded-full bg-green-400" />
+                <select
+                  value={selectedLanguage}
+                  onChange={(e) => setSelectedLanguage(e.target.value as "javascript" | "html" | "css")}
+                  className="ml-2 bg-transparent text-slate-300 text-xs font-medium border border-slate-500 rounded px-2 py-1 cursor-pointer hover:border-slate-400 focus:outline-none focus:border-blue-400"
+                >
+                  <option value="javascript">JavaScript (script.js)</option>
+                  <option value="html">HTML (index.html)</option>
+                  <option value="css">CSS (style.css)</option>
+                </select>
+              </div>
+
+              <div className="flex-1 overflow-hidden">
+                <CodeEditor
+                  value={userCode}
+                  language={selectedLanguage}
+                  onChange={setUserCode}
+                />
+              </div>
             </div>
-            <div className="flex-1 overflow-hidden bg-white">
-              <LivePreview code={userCode} language={selectedLanguage} runKey={runKey} />
+
+            {/* Resizable Divider */}
+            <div
+              ref={dividerRef}
+              className="h-1 bg-slate-300 hover:bg-blue-500 cursor-row-resize shrink-0 transition-colors"
+            />
+
+            {/* Bottom: Live Preview */}
+            <div style={{ height: `${100 - editorHeight}%` }} className="overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50 shrink-0">
+                <span className="text-xs font-semibold text-slate-500">KẾT QUẢ</span>
+                <button
+                  onClick={() => setRunKey(k => k + 1)}
+                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                >
+                  <Play size={10} /> Chạy lại
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden bg-white">
+                <LivePreview code={userCode} language={selectedLanguage} runKey={runKey} />
+              </div>
             </div>
           </div>
         </div>

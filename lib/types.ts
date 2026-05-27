@@ -71,7 +71,8 @@ export interface Lesson {
   courseId: number;
   title: string;
   description: string;
-  content: string;
+  content: string; // Nội dung text/bài học
+  template?: string; // Code template cho editor
   language?: "javascript" | "html" | "css";
   durationMinutes: number;
   isFree: boolean;
@@ -81,7 +82,8 @@ export interface CreateLessonRequest {
   courseId: number;
   title: string;
   description: string;
-  content: string;
+  content: string; // Nội dung text/bài học
+  template?: string; // Code template cho editor
   language?: "javascript" | "html" | "css";
   durationMinutes: number;
   isFree: boolean;

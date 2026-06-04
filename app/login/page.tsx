@@ -22,7 +22,7 @@ export default function LoginPage() {
       setToken(res.accessToken);
       setRefreshToken(res.refreshToken);
       saveUser(res.user);
-      router.push("/");
+      router.push("/home");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
     } finally {

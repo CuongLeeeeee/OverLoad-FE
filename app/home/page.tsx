@@ -22,12 +22,7 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const router = useRouter();
 
-  useEffect(() => {
-    if (!isLoggedIn()) {
-      router.push("/login");
-    }
-  }, []);
-
+  
   useEffect(() => {
     setLoading(true);
     setError("");

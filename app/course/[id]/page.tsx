@@ -7,6 +7,9 @@ import { Course, Lesson } from "@/lib/types";
 import LessonSidebar from "@/components/course/LessonSidebar";
 import LessonContent from "@/components/course/LessonContent";
 import { ChevronLeft, ChevronRight, Menu, MoreVertical, Loader2 } from "lucide-react";
+import { isLoggedIn, getUser } from "@/lib/auth";
+import { enrollmentsApi } from "@/lib/api";
+import { useRouter } from "next/navigation";
 
 export default function CoursePage() {
   const params = useParams();
@@ -20,6 +23,9 @@ export default function CoursePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"desc" | "qa" | "author">("desc");
+  const router = useRouter();
+  const [isEnrolled, setIsEnrolled] = useState(false);
+
 
   useEffect(() => {
     if (!id) return;
@@ -35,6 +41,17 @@ export default function CoursePage() {
           setActiveLessonId(ls[0].id);
           setActiveLesson(ls[0]);
         }
+
+        // Check enrollment nếu đã login
+        const user = getUser();
+        if (user) {
+          enrollmentsApi.getByUser(user.id)
+            .then((enrollments) => {
+              const enrolled = enrollments.some((e) => e.courseId === id);
+              setIsEnrolled(enrolled);
+            })
+            .catch(() => setIsEnrolled(false));
+        }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -42,9 +59,27 @@ export default function CoursePage() {
 
   // Load lesson detail when switching
   const handleLessonSelect = (lessonId: number) => {
+    if (!isEnrolled) {
+      // Hiện thông báo hoặc scroll đến nút đăng ký
+      return;
+    }
     setActiveLessonId(lessonId);
     const found = lessons.find((l) => l.id === lessonId) ?? null;
     setActiveLesson(found);
+  };
+  const handleEnroll = async () => {
+    if (!isLoggedIn()) {
+      router.push("/login");
+      return;
+    }
+    const user = getUser()!;
+    try {
+      await enrollmentsApi.enroll(user.id, id);
+      setIsEnrolled(true);
+    } catch {
+      // đã enroll rồi thì cũng set true
+      setIsEnrolled(true);
+    }
   };
 
   if (loading) {
@@ -132,7 +167,7 @@ export default function CoursePage() {
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {activeLesson ? (
+          {activeLesson &&isEnrolled ? (
             <LessonContent
               lesson={activeLesson}
               course={course}
@@ -140,8 +175,17 @@ export default function CoursePage() {
               onTabChange={setActiveTab}
             />
           ) : (
-            <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-              Chọn bài học để bắt đầu
+            <div className="flex flex-col items-center justify-center h-full gap-4">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-slate-800 mb-2">{course.title}</h2>
+                <p className="text-slate-500 text-sm mb-6">Đăng ký khóa học để bắt đầu học</p>
+                <button
+                  onClick={handleEnroll}
+                  className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors"
+                >
+                  {isLoggedIn() ? "Đăng ký học miễn phí" : "Đăng nhập để học"}
+                </button>
+              </div>
             </div>
           )}
         </div>

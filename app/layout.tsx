@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AIChatBox from "../components/chat/AIChatBox";
 
 export const metadata: Metadata = {
   title: "OverLoad - Học lập trình online",
@@ -9,7 +10,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi">
-      <body>{children}</body>
+      <body>
+        {children}
+        <AIChatBox />
+      </body>
     </html>
   );
 }

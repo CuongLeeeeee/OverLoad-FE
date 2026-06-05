@@ -1,22 +1,34 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Course, getCourseColor, LEVEL_MAP } from "@/lib/types";
+import { Course, UserCourse, getCourseColor, LEVEL_MAP } from "@/lib/types";
 import { enrollmentsApi } from "@/lib/api";
 import { getUser } from "@/lib/auth";
+import { CheckCircle2 } from "lucide-react";
 import CoursePopup from "./CoursePopup";
 
-export default function CourseCard({ course }: { course: Course }) {
+interface Props {
+  course: Course | UserCourse;
+  showProgress?: boolean;
+}
+
+export default function CourseCard({ course, showProgress = false }: Props) {
   const router = useRouter();
   const [showPopup, setShowPopup] = useState(false);
   const [checking, setChecking] = useState(false);
   const color = getCourseColor(course);
   const levelInfo = LEVEL_MAP[course.level] ?? { label: course.level, badge: "free" };
   const isFree = levelInfo.badge === "free";
+  
+  // Check if this is a UserCourse (has progress info)
+  const isUserCourse = "progressPercentage" in course;
+  const progressPercentage = isUserCourse ? (course as UserCourse).progressPercentage : 0;
+  const isCompleted = isUserCourse ? (course as UserCourse).isCompleted : false;
 
   const handleClick = () => {
-  router.push(`/course/${course.id}`);
-};
+    const courseId = 'id' in course ? course.id : course.courseId;
+    router.push(`/course/${courseId}`);
+  };
 
   return (
     <>
@@ -38,9 +50,40 @@ export default function CourseCard({ course }: { course: Course }) {
         {/* Info */}
         <div className="p-3">
           <div className="font-semibold text-sm text-slate-800 mb-2 line-clamp-1">{course.title}</div>
-          {isFree ? (
+          
+          {/* Progress display */}
+          {isUserCourse && (
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-slate-600">Tiến độ</span>
+                <span className="text-xs font-bold text-blue-600">{progressPercentage}%</span>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    isCompleted ? "bg-green-500" : "bg-blue-500"
+                  }`}
+                  style={{ width: `${progressPercentage}%` }}
+                />
+              </div>
+              {isCompleted && (
+                <div className="flex items-center gap-1 mt-1 text-green-600">
+                  <CheckCircle2 size={12} />
+                  <span className="text-xs font-semibold">Hoàn thành</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {isFree && !isCompleted ? (
             <div className="flex justify-center">
               <span className="badge-free">Miễn phí</span>
+            </div>
+          ) : isCompleted ? (
+            <div className="flex justify-center">
+              <span className="px-3 py-1 text-xs font-semibold bg-green-100 text-green-700 rounded-full">
+                ✓ Đã hoàn thành
+              </span>
             </div>
           ) : (
             <>
@@ -62,7 +105,7 @@ export default function CourseCard({ course }: { course: Course }) {
       </div>
 
       {showPopup && (
-        <CoursePopup course={course} onClose={() => setShowPopup(false)} />
+        <CoursePopup course={course as Course} onClose={() => setShowPopup(false)} />
       )}
     </>
   );

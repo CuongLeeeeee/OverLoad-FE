@@ -2,15 +2,19 @@
 import { useState, useRef, useEffect } from "react";
 import parse, { domToReact, HTMLReactParserOptions, Element } from "html-react-parser";
 import { Course, Lesson } from "@/lib/types";
-import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw } from "lucide-react";
+import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw, Check, Loader2 } from "lucide-react";
 import CodeEditor from "./CodeEditor";
 import LivePreview from "./LivePreview";
+import { progressApi, lessonsApi } from "@/lib/api";
+import { getUser } from "@/lib/auth";
 
 interface Props {
   lesson: Lesson;
   course: Course;
   activeTab: "desc" | "qa" | "author";
   onTabChange: (tab: "desc" | "qa" | "author") => void;
+  onLessonCompleted?: (lessonId: number) => void;
+  initialCompleted?: boolean;
 }
 
 // Detect language from lesson template (simple heuristic)
@@ -20,7 +24,7 @@ function detectLanguage(code: string): string {
   return "javascript";
 }
 
-export default function LessonContent({ lesson, course, activeTab, onTabChange }: Props) {
+export default function LessonContent({ lesson, course, activeTab, onTabChange, onLessonCompleted, initialCompleted = false }: Props) {
   const defaultLanguage = lesson.language || detectLanguage(lesson.template ?? "");
   const [selectedLanguage, setSelectedLanguage] = useState<"javascript" | "html" | "css">(defaultLanguage as "javascript" | "html" | "css");
   const [userCode, setUserCode] = useState(lesson.template ?? "");
@@ -31,6 +35,13 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
   const verticalDividerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(50); // percentage for left column
   const leftWidthRef = useRef(leftWidth);
+  
+  // Progress tracking
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const completedRef = useRef(false);
+  
   // Drag handling using pointer events for reliability
   const isDraggingRef = useRef(false);
   const startYRef = useRef(0);
@@ -46,6 +57,55 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
   useEffect(() => {
     leftWidthRef.current = leftWidth;
   }, [leftWidth]);
+
+  // Scroll tracking effect (disabled - using button instead)
+  useEffect(() => {
+    // Scroll tracking removed - user now manually clicks button
+  }, []);
+
+  // Reset state when lesson changes
+  useEffect(() => {
+    setIsCompleted(initialCompleted);
+    setMessage("");
+    completedRef.current = initialCompleted;
+  }, [lesson.id, initialCompleted]);
+
+  // Mark lesson as complete
+  const markLessonComplete = async (isAuto: boolean = false) => {
+    try {
+      const user = getUser();
+      if (!user) {
+        setMessage("Vui lòng đăng nhập để lưu tiến trình");
+        return;
+      }
+
+      setIsLoading(true);
+      completedRef.current = true;
+
+      // Call Progress/upsert API to mark as completed
+      await progressApi.upsertV2({
+        userId: user.id,
+        lessonId: lesson.id,
+        lastScrollPercentage: 100,
+        completed: true,
+        watchTimeSeconds: Math.floor(lesson.durationMinutes * 60),
+      });
+
+      setIsCompleted(true);
+      setMessage("✓ Bạn đã đánh dấu hoàn thành bài học");
+      
+      onLessonCompleted?.(lesson.id);
+
+      // Clear message after 3 seconds
+      setTimeout(() => setMessage(""), 3000);
+    } catch (err) {
+      setMessage(`Lỗi: ${err instanceof Error ? err.message : "Không thể lưu tiến trình"}`);
+      completedRef.current = false;
+      setTimeout(() => setMessage(""), 3000);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     // Use an effect that mounts once to avoid reattaching listeners during drag
@@ -203,23 +263,44 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
         <div ref={containerRef} className="flex-1 overflow-hidden flex flex-row">
           {/* Left: Content */}
           <div style={{ width: `${leftWidth}%` }} className="overflow-y-auto border-r border-slate-100 p-6">
-            <h2 className="text-xl font-bold text-slate-800 mb-3">{lesson.title}</h2>
+            <div className="flex items-start justify-between mb-3">
+              <h2 className="text-xl font-bold text-slate-800">{lesson.title}</h2>
+              {isCompleted && (
+                <div className="flex items-center gap-1 px-2 py-1 bg-green-50 rounded-full">
+                  <Check size={16} className="text-green-600" />
+                  <span className="text-xs font-semibold text-green-600">Đã hoàn thành</span>
+                </div>
+              )}
+            </div>
 
             {/* Stats */}
             <div className="flex items-center gap-4 text-sm text-slate-500 mb-4">
               <span className="flex items-center gap-1.5">
                 <Clock size={14} /> {lesson.durationMinutes} phút
               </span>
-              {lesson.isFree && (
+              {isCompleted ? (
                 <span className="text-green-600 font-medium text-xs bg-green-50 px-2 py-0.5 rounded-full">
-                  Miễn phí
+                  ✓ Hoàn thành
                 </span>
+              ) : (
+                lesson.isFree && (
+                  <span className="text-green-600 font-medium text-xs bg-green-50 px-2 py-0.5 rounded-full">
+                    Miễn phí
+                  </span>
+                )
               )}
             </div>
 
             {/* Description */}
             {lesson.description && (
               <p className="text-sm text-slate-600 leading-relaxed mb-5">{lesson.description}</p>
+            )}
+
+            {/* Progress message */}
+            {message && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+                {message}
+              </div>
             )}
 
             {/* Course stats */}
@@ -269,6 +350,11 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
                   <div className="lesson-content">
                     {parse(lesson.content, {
   replace(node) {
+    // Skip invalid/placeholder tags
+    if (node instanceof Element && node.name?.includes("__")) {
+      return <></>;
+    }
+    
     if (node instanceof Element && node.name === "pre") {
       const code = node.children
         .map((c: any) => c.type === "text" ? c.data : c.children?.map((cc: any) => cc.data ?? "").join("") ?? "")
@@ -299,6 +385,29 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
 })}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Complete button - at end of lesson */}
+            {!isCompleted && (
+              <div className="mt-8 p-6 bg-green-50 border border-green-200 rounded-lg">
+                <button
+                  onClick={() => markLessonComplete(false)}
+                  disabled={isLoading}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-400 text-white font-semibold rounded-lg transition-colors text-base"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      Đang lưu...
+                    </>
+                  ) : (
+                    <>
+                      <Check size={18} />
+                      Đánh dấu hoàn thành bài học
+                    </>
+                  )}
+                </button>
               </div>
             )}
           </div>

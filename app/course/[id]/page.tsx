@@ -2,13 +2,12 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { coursesApi } from "@/lib/api";
-import { Course, Lesson } from "@/lib/types";
+import { coursesApi, lessonsApi, enrollmentsApi } from "@/lib/api";
+import { Course, Lesson, CourseProgress, LessonWithProgress } from "@/lib/types";
 import LessonSidebar from "@/components/course/LessonSidebar";
 import LessonContent from "@/components/course/LessonContent";
 import { ChevronLeft, ChevronRight, Menu, MoreVertical, Loader2 } from "lucide-react";
 import { isLoggedIn, getUser } from "@/lib/auth";
-import { enrollmentsApi } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
 export default function CoursePage() {
@@ -16,13 +15,15 @@ export default function CoursePage() {
   const id = Number(params.id);
 
   const [course, setCourse] = useState<Course | null>(null);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [lessons, setLessons] = useState<(Lesson | LessonWithProgress)[]>([]);
   const [activeLessonId, setActiveLessonId] = useState<number | null>(null);
-  const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
+  const [activeLesson, setActiveLesson] = useState<Lesson | LessonWithProgress | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"desc" | "qa" | "author">("desc");
+  const [courseProgress, setCourseProgress] = useState<CourseProgress | null>(null);
+  const [progressLoading, setProgressLoading] = useState(false);
   const router = useRouter();
   const [isEnrolled, setIsEnrolled] = useState(false);
 
@@ -51,11 +52,37 @@ export default function CoursePage() {
               setIsEnrolled(enrolled);
             })
             .catch(() => setIsEnrolled(false));
+
+          // Load course progress
+          loadCourseProgress(id);
         }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Load course progress
+  const loadCourseProgress = async (courseId: number) => {
+    try {
+      setProgressLoading(true);
+      const progress = await coursesApi.getCourseProgress(courseId);
+      console.log("loadCourseProgress success:", progress);
+      setCourseProgress(progress);
+    } catch (err) {
+      console.error("Failed to load course progress:", err);
+      setCourseProgress(null);
+    } finally {
+      setProgressLoading(false);
+    }
+  };
+
+  // Callback when lesson is completed
+  const handleLessonCompleted = (lessonId: number) => {
+    // Reload course progress
+    if (course) {
+      loadCourseProgress(course.id);
+    }
+  };
 
   // Load lesson detail when switching
   const handleLessonSelect = (lessonId: number) => {
@@ -66,6 +93,18 @@ export default function CoursePage() {
     setActiveLessonId(lessonId);
     const found = lessons.find((l) => l.id === lessonId) ?? null;
     setActiveLesson(found);
+    
+    // Load lesson with full content from API
+    if (found) {
+      lessonsApi.getById(lessonId)
+        .then((fullLesson) => {
+          setActiveLesson(fullLesson);
+        })
+        .catch((err) => {
+          console.error("Failed to load lesson content:", err);
+          // Keep the lesson from the list even if content load fails
+        });
+    }
   };
   const handleEnroll = async () => {
     if (!isLoggedIn()) {
@@ -116,6 +155,8 @@ export default function CoursePage() {
             activeLessonId={activeLessonId}
             onLessonSelect={handleLessonSelect}
             onClose={() => setSidebarOpen(false)}
+            courseProgress={courseProgress}
+            progressLoading={progressLoading}
           />
         )}
       </div>
@@ -167,12 +208,14 @@ export default function CoursePage() {
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {activeLesson &&isEnrolled ? (
+          {activeLesson && isEnrolled ? (
             <LessonContent
-              lesson={activeLesson}
+              lesson={activeLesson as Lesson}
               course={course}
               activeTab={activeTab}
               onTabChange={setActiveTab}
+              onLessonCompleted={handleLessonCompleted}
+              initialCompleted={"completed" in activeLesson ? (activeLesson as any).completed : false}
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-4">

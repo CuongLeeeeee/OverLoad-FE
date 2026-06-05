@@ -2,7 +2,7 @@ import {
   ApiResponse, AuthResponse, LoginRequest, CreateUserRequest, User,
   Course, CoursesQuery, PaginatedCourses, Lesson, CreateLessonRequest,
   Enrollment, EnrollmentDetail, UpdateProgressRequest, LessonProgress, CreateProgressRequest,
-  RegisterRequest,
+  RegisterRequest, CourseProgress, UserCourse, LessonWithProgress,
 } from "./types";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483") + "/api";
@@ -99,7 +99,10 @@ export const coursesApi = {
     ),
 
   getLessons: (courseId: number) =>
-    request<Lesson[]>(`/courses/${courseId}/lessons`),
+    request<LessonWithProgress[]>(`/courses/${courseId}/lessons`),
+
+  getCourseProgress: (courseId: number) =>
+    request<CourseProgress>(`/courses/${courseId}/progress`),
 };
 
 // ─── Lessons ─────────────────────────────────────────────────────────────────
@@ -118,6 +121,9 @@ export const lessonsApi = {
 
   delete: (id: number) =>
     request<void>(`/lessons/${id}`, { method: "DELETE" }),
+
+  complete: (lessonId: number) =>
+    request<void>(`/lessons/${lessonId}/complete`, { method: "POST" }),
 };
 
 // ─── Users ───────────────────────────────────────────────────────────────────
@@ -127,6 +133,9 @@ export const usersApi = {
 
   update: (id: number, body: Partial<User>) =>
     request<User>(`/users/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  getMyCoursesWithProgress: () =>
+    request<UserCourse[]>("/users/me/courses"),
 };
 
 // ─── Enrollments ─────────────────────────────────────────────────────────────
@@ -166,6 +175,9 @@ export const progressApi = {
 
   upsert: (body: CreateProgressRequest) =>
     request<LessonProgress>("/progress", { method: "POST", body: JSON.stringify(body) }),
+
+  upsertV2: (body: CreateProgressRequest) =>
+    request<LessonProgress>("/Progress/upsert", { method: "POST", body: JSON.stringify(body) }),
 
   delete: (id: number) =>
     request<void>(`/progress/${id}`, { method: "DELETE" }),

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, BookOpen, Loader2 } from "lucide-react";
 import { Course, getCourseColor, LEVEL_MAP } from "@/lib/types";
-import { enrollmentsApi } from "@/lib/api";
+import { enrollmentsApi, paymentApi } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 
 interface Props {
@@ -29,15 +29,34 @@ export default function CoursePopup({ course, onClose }: Props) {
     setLoading(true);
     setError("");
     try {
-      await enrollmentsApi.enroll(user.id, course.id);
-      router.push(`/course/${course.id}`);
+      if (course.price > 0) {
+        const fromPath = typeof window !== "undefined" ? window.location.pathname : "/";
+        const res = await paymentApi.createLink({
+          courseId: course.id,
+          returnUrl: `${window.location.origin}/payment/success?from=${encodeURIComponent(fromPath)}`,
+          cancelUrl: `${window.location.origin}/payment/cancel?from=${encodeURIComponent(fromPath)}`,
+        });
+        if (res && res.checkoutUrl) {
+          window.location.href = res.checkoutUrl;
+        } else {
+          throw new Error("Không thể tạo liên kết thanh toán.");
+        }
+      } else {
+        await enrollmentsApi.enroll(user.id, course.id);
+        router.push(`/course/${course.id}`);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
-      // Nếu đã enroll rồi thì vào thẳng luôn
-      if (msg.includes("400") || msg.includes("409") || msg.toLowerCase().includes("already")) {
+      if (
+        msg.includes("400") ||
+        msg.includes("409") ||
+        msg.toLowerCase().includes("already") ||
+        msg.includes("đăng ký") ||
+        msg.includes("đã mua")
+      ) {
         router.push(`/course/${course.id}`);
       } else {
-        setError("Có lỗi xảy ra, vui lòng thử lại.");
+        setError(msg || "Có lỗi xảy ra, vui lòng thử lại.");
         setLoading(false);
       }
     }
@@ -69,7 +88,12 @@ export default function CoursePopup({ course, onClose }: Props) {
         {/* Body */}
         <div className="p-6">
           <h2 className="text-lg font-bold text-slate-800 mb-1">{course.title}</h2>
-          <span className={`badge-${levelInfo.badge} inline-block mb-3`}>{levelInfo.label}</span>
+          <div className="flex justify-between items-center mb-3">
+            <span className={`badge-${levelInfo.badge} inline-block`}>{levelInfo.label}</span>
+            <span className="text-sm font-bold text-blue-600">
+              {course.price > 0 ? `${course.price.toLocaleString("vi-VN")} VND` : "Miễn phí"}
+            </span>
+          </div>
 
           <p className="text-sm text-slate-500 mb-4 leading-relaxed line-clamp-3">
             {course.description}
@@ -95,7 +119,7 @@ export default function CoursePopup({ course, onClose }: Props) {
               className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
             >
               {loading && <Loader2 size={14} className="animate-spin" />}
-              Vào học ngay
+              {course.price > 0 ? "Mua khóa học" : "Vào học ngay"}
             </button>
           </div>
         </div>

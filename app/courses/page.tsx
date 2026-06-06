@@ -8,13 +8,27 @@ import { Course, EnrollmentDetail } from "@/lib/types";
 import { getUser, isLoggedIn } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import PaymentResultModal from "@/components/payment/PaymentResultModal";
 
 export default function MyCoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [enrollments, setEnrollments] = useState<EnrollmentDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [paymentResult, setPaymentResult] = useState<"success" | "cancel" | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const payStatus = params.get("payment");
+      if (payStatus === "success" || payStatus === "cancel") {
+        setPaymentResult(payStatus);
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, "", newUrl);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -55,7 +69,7 @@ export default function MyCoursesPage() {
       enrollment,
       course: courseMap.get(enrollment.courseId),
     }))
-    .filter((item): item is { enrollment: EnrollmentDetail; course: Course } => Boolean(item.course));
+    .filter((item): item is { enrollment: EnrollmentDetail; course: Course } => Boolean(item.course) && item.course?.category !== "System");
 
   return (
     <div className="flex min-h-screen bg-[#eef2fb]">
@@ -107,6 +121,12 @@ export default function MyCoursesPage() {
           )}
         </main>
       </div>
+      {paymentResult && (
+        <PaymentResultModal
+          status={paymentResult}
+          onClose={() => setPaymentResult(null)}
+        />
+      )}
     </div>
   );
 }

@@ -8,6 +8,8 @@ import { Course } from "@/lib/types";
 import { ChevronRight, MessageCircle, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { isLoggedIn } from "@/lib/auth";
+import LandingPage from "./landing/page";
+import PaymentResultModal from "@/components/payment/PaymentResultModal";
 
 const categoryTitles: Record<string, string> = {
   frontend: "Front-end",
@@ -22,9 +24,31 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const router = useRouter();
 
+  // Safety variables for client-side hydration check
+  const [mounted, setMounted] = useState(false);
+  const [authed, setAuthed] = useState(false);
+  const [paymentResult, setPaymentResult] = useState<"success" | "cancel" | null>(null);
+
   useEffect(() => {
-    if (!isLoggedIn()) {
-      router.push("/login");
+    setAuthed(isLoggedIn());
+    setMounted(true);
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const catParam = params.get("category");
+      if (catParam) {
+        setSelectedCategory(catParam);
+      }
+
+      const payStatus = params.get("payment");
+      if (payStatus === "success" || payStatus === "cancel") {
+        setPaymentResult(payStatus);
+      }
+
+      if (catParam || payStatus === "success" || payStatus === "cancel") {
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, "", newUrl);
+      }
     }
   }, []);
 
@@ -136,6 +160,13 @@ export default function HomePage() {
       <button className="fixed bottom-6 left-[86px] w-10 h-10 bg-white rounded-full shadow-lg flex items-center justify-center hover:shadow-xl transition-shadow border border-slate-100">
         <MessageCircle size={18} className="text-slate-500" />
       </button>
+
+      {paymentResult && (
+        <PaymentResultModal
+          status={paymentResult}
+          onClose={() => setPaymentResult(null)}
+        />
+      )}
     </div>
   );
 }

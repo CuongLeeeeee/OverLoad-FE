@@ -50,6 +50,7 @@ export interface Course {
   description: string;
   thumbnailUrl?: string;
   category: string;
+  price: number; // Giá khóa học (0 nếu miễn phí)
   level: "Beginner" | "Intermediate" | "Advanced";
   isPublished: boolean;
   slug?: string;
@@ -57,6 +58,44 @@ export interface Course {
   totalLessons?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+// ===== Payment =====
+export interface Transaction {
+  transactionId: string;
+  orderCode: number;
+  userId: number;
+  userFullName?: string;
+  courseId: number;
+  courseTitle?: string;
+  amount: number;
+  currency: string;
+  status: "PENDING" | "SUCCESS" | "CANCELLED";
+  paymentTime: string;
+}
+
+export interface RevenueStats {
+  totalRevenue: number;
+  coursesSold: number;
+  transactions: Transaction[];
+}
+
+export interface CreatePaymentLinkRequest {
+  courseId: number;
+  returnUrl?: string;
+  cancelUrl?: string;
+}
+
+export interface CreateProPaymentLinkRequest {
+  packageType: "month" | "year";
+  returnUrl?: string;
+  cancelUrl?: string;
+}
+
+export interface CreateDepositLinkRequest {
+  amount: number;
+  returnUrl?: string;
+  cancelUrl?: string;
 }
 
 export interface CoursesQuery {

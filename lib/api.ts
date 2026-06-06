@@ -2,7 +2,8 @@ import {
   ApiResponse, AuthResponse, LoginRequest, CreateUserRequest, User,
   Course, CoursesQuery, PaginatedCourses, Lesson, CreateLessonRequest,
   Enrollment, EnrollmentDetail, UpdateProgressRequest, LessonProgress, CreateProgressRequest,
-  RegisterRequest,
+  RegisterRequest, Transaction, RevenueStats, CreatePaymentLinkRequest, CreateProPaymentLinkRequest,
+  CreateDepositLinkRequest
 } from "./types";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483") + "/api";
@@ -100,6 +101,15 @@ export const coursesApi = {
 
   getLessons: (courseId: number) =>
     request<Lesson[]>(`/courses/${courseId}/lessons`),
+
+  create: (body: Partial<Course>) =>
+    request<Course>("/courses", { method: "POST", body: JSON.stringify(body) }),
+
+  update: (id: number, body: Partial<Course>) =>
+    request<Course>(`/courses/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  delete: (id: number) =>
+    request<void>(`/courses/${id}`, { method: "DELETE" }),
 };
 
 // ─── Lessons ─────────────────────────────────────────────────────────────────
@@ -169,4 +179,40 @@ export const progressApi = {
 
   delete: (id: number) =>
     request<void>(`/progress/${id}`, { method: "DELETE" }),
+};
+
+// ─── Payment ─────────────────────────────────────────────────────────────────
+export const paymentApi = {
+  createLink: (body: CreatePaymentLinkRequest) =>
+    request<{ checkoutUrl: string }>("/payment/create-link", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  createProLink: (body: CreateProPaymentLinkRequest) =>
+    request<{ checkoutUrl: string }>("/payment/create-pro-link", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  buyProWithBalance: (body: CreateProPaymentLinkRequest) =>
+    request<{ message: string }>("/payment/buy-pro-balance", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  createDepositLink: (body: CreateDepositLinkRequest) =>
+    request<{ checkoutUrl: string }>("/payment/create-deposit-link", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getBalance: () =>
+    request<{ balance: number }>("/payment/balance"),
+
+  getTransactions: () =>
+    request<Transaction[]>("/payment/transactions"),
+
+  getStats: () =>
+    request<RevenueStats>("/payment/stats"),
 };

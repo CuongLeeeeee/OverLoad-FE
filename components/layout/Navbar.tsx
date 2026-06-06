@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getUser } from "@/lib/auth";
 import { User } from "@/lib/types";
+import PricingModal from "@/components/payment/PricingModal";
 
 export default function Navbar() {
   const [user, setUser] = useState<User | null>(null);
+  const [isPricingOpen, setIsPricingOpen] = useState(false);
 
   useEffect(() => {
     setUser(getUser());
@@ -28,7 +30,10 @@ export default function Navbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-3">
-        <button className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-sm font-600 hover:bg-orange-600 transition-colors">
+        <button
+          onClick={() => setIsPricingOpen(true)}
+          className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-sm font-600 hover:bg-orange-600 transition-colors"
+        >
           <Zap size={14} fill="white" />
           Nâng cấp
         </button>
@@ -50,6 +55,7 @@ export default function Navbar() {
           </Link>
         </div>
       </div>
+      {isPricingOpen && <PricingModal onClose={() => setIsPricingOpen(false)} />}
     </header>
   );
 }

@@ -192,6 +192,48 @@ export interface CreateProgressRequest {
   watchTimeSeconds?: number;
 }
 
+// ===== Course Progress (GET /api/courses/{id}/progress) =====
+export interface CourseProgress {
+  courseId: number;
+  courseTitle: string;
+  progressPercentage: number;
+  completedLessons: number;
+  totalLessons: number;
+  totalWatchTimeSeconds: number;
+  lastAccessedAt?: string;
+  completed: boolean;
+}
+
+// ===== User Course (GET /api/users/me/courses) =====
+export interface UserCourse {
+  courseId: number;
+  title: string;
+  thumbnailUrl?: string;
+  category: string;
+  price?: number;
+  level: "Beginner" | "Intermediate" | "Advanced";
+  progressPercentage: number;
+  completedLessons: number;
+  totalLessons: number;
+  lastAccessedAt?: string;
+  isCompleted: boolean;
+}
+
+// ===== Lesson With Progress (GET /api/courses/{id}/lessons) =====
+export interface LessonWithProgress {
+  id: number;
+  courseId?: number;
+  title: string;
+  description?: string;
+  durationMinutes: number;
+  isFree?: boolean;
+  orderIndex: number;
+  completed: boolean;
+  watchPercentage: number;
+  lastPositionSeconds: number;
+  isLocked: boolean;
+}
+
 // ===== UI helpers (FE-only, not from BE) =====
 // Map BE level → UI display
 export const LEVEL_MAP: Record<string, { label: string; badge: "free" | "plus" | "pro" }> = {
@@ -212,7 +254,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   "default": "from-blue-500 to-indigo-600",
 };
 
-export function getCourseColor(course: Course): string {
+export function getCourseColor(course: { title: string; category: string }): string {
   for (const key of Object.keys(CATEGORY_COLORS)) {
     if (course.title.includes(key) || course.category.includes(key)) {
       return CATEGORY_COLORS[key];

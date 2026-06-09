@@ -3,7 +3,7 @@ import {
   Course, CoursesQuery, PaginatedCourses, Lesson, CreateLessonRequest,
   Enrollment, EnrollmentDetail, UpdateProgressRequest, LessonProgress, CreateProgressRequest,
   RegisterRequest, Transaction, RevenueStats, CreatePaymentLinkRequest, CreateProPaymentLinkRequest,
-  CreateDepositLinkRequest
+  CreateDepositLinkRequest, CourseProgress, UserCourse, LessonWithProgress
 } from "./types";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483") + "/api";
@@ -34,7 +34,15 @@ async function request<T>(
     ...options.headers,
   };
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  const url = `${BASE_URL}${path}`;
+  let res: Response;
+
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Network request failed";
+    throw new Error(`Cannot reach API ${url}: ${message}`);
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -100,7 +108,10 @@ export const coursesApi = {
     ),
 
   getLessons: (courseId: number) =>
-    request<Lesson[]>(`/courses/${courseId}/lessons`),
+    request<LessonWithProgress[]>(`/courses/${courseId}/lessons`),
+
+  getCourseProgress: (courseId: number) =>
+    request<CourseProgress>(`/courses/${courseId}/progress`),
 
   create: (body: Partial<Course>) =>
     request<Course>("/courses", { method: "POST", body: JSON.stringify(body) }),
@@ -137,6 +148,9 @@ export const usersApi = {
 
   update: (id: number, body: Partial<User>) =>
     request<User>(`/users/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  getMyCoursesWithProgress: () =>
+    request<UserCourse[]>("/users/me/courses"),
 };
 
 // ─── Enrollments ─────────────────────────────────────────────────────────────
@@ -176,6 +190,9 @@ export const progressApi = {
 
   upsert: (body: CreateProgressRequest) =>
     request<LessonProgress>("/progress", { method: "POST", body: JSON.stringify(body) }),
+
+  upsertV2: (body: CreateProgressRequest) =>
+    request<LessonProgress>("/Progress/upsert", { method: "POST", body: JSON.stringify(body) }),
 
   delete: (id: number) =>
     request<void>(`/progress/${id}`, { method: "DELETE" }),

@@ -2,15 +2,19 @@
 import { useState, useRef, useEffect } from "react";
 import parse, { domToReact, HTMLReactParserOptions, Element } from "html-react-parser";
 import { Course, Lesson } from "@/lib/types";
-import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw } from "lucide-react";
+import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw, Check, Loader2 } from "lucide-react";
 import CodeEditor from "./CodeEditor";
 import LivePreview from "./LivePreview";
+import { getUser } from "@/lib/auth";
+import { useLessonProgress } from "@/lib/useLessonProgress";
 
 interface Props {
   lesson: Lesson;
   course: Course;
   activeTab: "desc" | "qa" | "author";
   onTabChange: (tab: "desc" | "qa" | "author") => void;
+  onLessonCompleted?: (lessonId: number) => void;
+  initialCompleted?: boolean;
 }
 
 // Detect language from lesson template (simple heuristic)
@@ -20,7 +24,14 @@ function detectLanguage(code: string): string {
   return "javascript";
 }
 
-export default function LessonContent({ lesson, course, activeTab, onTabChange }: Props) {
+export default function LessonContent({
+  lesson,
+  course,
+  activeTab,
+  onTabChange,
+  onLessonCompleted,
+  initialCompleted = false,
+}: Props) {
   const defaultLanguage = lesson.language || detectLanguage(lesson.template ?? "");
   const [selectedLanguage, setSelectedLanguage] = useState<"javascript" | "html" | "css">(defaultLanguage as "javascript" | "html" | "css");
   const [userCode, setUserCode] = useState(lesson.template ?? "");
@@ -31,6 +42,10 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
   const verticalDividerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(50); // percentage for left column
   const leftWidthRef = useRef(leftWidth);
+  const [isCompleted, setIsCompleted] = useState(initialCompleted);
+  const [message, setMessage] = useState("");
+  const { markLessonComplete, savingLessonId } = useLessonProgress();
+  const isSavingProgress = savingLessonId === lesson.id;
   // Drag handling using pointer events for reliability
   const isDraggingRef = useRef(false);
   const startYRef = useRef(0);
@@ -46,6 +61,30 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
   useEffect(() => {
     leftWidthRef.current = leftWidth;
   }, [leftWidth]);
+
+  useEffect(() => {
+    setIsCompleted(initialCompleted);
+    setMessage("");
+  }, [lesson.id, initialCompleted]);
+
+  const handleMarkLessonComplete = async () => {
+    const user = getUser();
+    if (!user) {
+      setMessage("Vui long dang nhap de luu tien trinh");
+      return;
+    }
+
+    try {
+      await markLessonComplete({ userId: user.id, lesson });
+      setIsCompleted(true);
+      setMessage("Da danh dau hoan thanh bai hoc");
+      onLessonCompleted?.(lesson.id);
+      window.setTimeout(() => setMessage(""), 3000);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Khong the luu tien trinh");
+      window.setTimeout(() => setMessage(""), 3000);
+    }
+  };
 
   useEffect(() => {
     // Use an effect that mounts once to avoid reattaching listeners during drag
@@ -203,7 +242,15 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
         <div ref={containerRef} className="flex-1 overflow-hidden flex flex-row">
           {/* Left: Content */}
           <div style={{ width: `${leftWidth}%` }} className="overflow-y-auto border-r border-slate-100 p-6">
-            <h2 className="text-xl font-bold text-slate-800 mb-3">{lesson.title}</h2>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h2 className="text-xl font-bold text-slate-800">{lesson.title}</h2>
+              {isCompleted && (
+                <div className="flex items-center gap-1 px-2 py-1 bg-green-50 rounded-full shrink-0">
+                  <Check size={16} className="text-green-600" />
+                  <span className="text-xs font-semibold text-green-600">Hoan thanh</span>
+                </div>
+              )}
+            </div>
 
             {/* Stats */}
             <div className="flex items-center gap-4 text-sm text-slate-500 mb-4">
@@ -220,6 +267,12 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
             {/* Description */}
             {lesson.description && (
               <p className="text-sm text-slate-600 leading-relaxed mb-5">{lesson.description}</p>
+            )}
+
+            {message && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+                {message}
+              </div>
             )}
 
             {/* Course stats */}
@@ -299,6 +352,28 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
 })}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {!isCompleted && (
+              <div className="mt-8 p-6 bg-green-50 border border-green-200 rounded-lg">
+                <button
+                  onClick={handleMarkLessonComplete}
+                  disabled={isSavingProgress}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-400 text-white font-semibold rounded-lg transition-colors text-base"
+                >
+                  {isSavingProgress ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      Dang luu...
+                    </>
+                  ) : (
+                    <>
+                      <Check size={18} />
+                      Danh dau hoan thanh bai hoc
+                    </>
+                  )}
+                </button>
               </div>
             )}
           </div>

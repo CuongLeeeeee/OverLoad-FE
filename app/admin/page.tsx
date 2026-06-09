@@ -3,23 +3,40 @@ import { useEffect, useState } from "react";
 import { useRequireRole } from "@/lib/useAuth";
 import AdminSidebar from "@/components/layout/AdminSidebar";
 import AdminNavbar from "@/components/layout/AdminNavbar";
-import { Users, BookOpen, TrendingUp, UserCheck, Loader2 } from "lucide-react";
+import { Users, BookOpen, TrendingUp, DollarSign, Loader2 } from "lucide-react";
+
+interface UserItem {
+  id: number;
+  fullName: string;
+  email: string;
+  role: string;
+  createdAt: string;
+}
 
 interface DashboardData {
   totalUsers: number;
   totalCourses: number;
-  totalEnrollments: number;
+  totalRevenue: number;
+  coursesSold: number;
   usersByRole: Record<string, number>;
-  recentUsers: {
-    id: number;
-    fullName: string;
-    email: string;
-    role: string;
-    createdAt: string;
-  }[];
+  recentUsers: UserItem[];
 }
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
+
+async function safeFetch<T>(url: string, token: string | null): Promise<T | null> {
+  try {
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
 
 export default function AdminDashboard() {
   useRequireRole("Admin");
@@ -29,20 +46,59 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const token = localStorage.getItem("ol_access_token");
-    fetch(`${BASE_URL}/api/admin/dashboard`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
-      .then((res) => setData(res.data))
-      .catch(console.error)
-      .finally(() => setLoading(false));
+
+    Promise.allSettled([
+      safeFetch<Record<string, unknown>>(`${BASE_URL}/api/admin/users?pageSize=100`, token),
+      safeFetch<Record<string, unknown>>(`${BASE_URL}/api/courses?pageSize=1`, token),
+      safeFetch<Record<string, unknown>>(`${BASE_URL}/api/payment/stats`, token),
+    ]).then(([usersRes, coursesRes, statsRes]) => {
+      // ── Users ──────────────────────────────────────────────
+      const usersPayload = usersRes.status === "fulfilled" ? usersRes.value : null;
+      const users: UserItem[] = (usersPayload?.["data"] as UserItem[]) ?? [];
+      const totalUsers: number =
+        ((usersPayload?.["pagination"] as Record<string, number>)?.["totalCount"]) ??
+        users.length;
+
+      const roleMap: Record<string, number> = {};
+      users.forEach((u) => { roleMap[u.role] = (roleMap[u.role] ?? 0) + 1; });
+
+      const recentUsers = [...users]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 8);
+
+      // ── Courses ────────────────────────────────────────────
+      const coursesPayload = coursesRes.status === "fulfilled" ? coursesRes.value : null;
+      const totalCourses: number =
+        (coursesPayload?.["totalCount"] as number) ??
+        ((coursesPayload?.["data"] as Record<string, number>)?.["totalCount"]) ??
+        0;
+
+      // ── Payment stats ──────────────────────────────────────
+      const statsPayload = statsRes.status === "fulfilled" ? statsRes.value : null;
+      const statsData = (statsPayload?.["data"] ?? statsPayload) as Record<string, number> | null;
+
+      setData({
+        totalUsers,
+        totalCourses,
+        totalRevenue: statsData?.["totalRevenue"] ?? 0,
+        coursesSold: statsData?.["coursesSold"] ?? 0,
+        usersByRole: roleMap,
+        recentUsers,
+      });
+    }).finally(() => setLoading(false));
   }, []);
 
   const stats = [
-    { label: "Tổng Users", value: data?.totalUsers ?? 0, icon: Users, color: "bg-blue-500" },
-    { label: "Tổng Courses", value: data?.totalCourses ?? 0, icon: BookOpen, color: "bg-purple-500" },
-    { label: "Enrollments", value: data?.totalEnrollments ?? 0, icon: TrendingUp, color: "bg-green-500" },
-    { label: "Đã xác minh", value: data?.usersByRole?.["Student"] ?? 0, icon: UserCheck, color: "bg-orange-500" },
+    { label: "Tổng Users",  value: data?.totalUsers ?? 0,  icon: Users,       color: "bg-blue-500" },
+    { label: "Tổng Courses", value: data?.totalCourses ?? 0, icon: BookOpen,   color: "bg-purple-500" },
+    { label: "Courses Sold", value: data?.coursesSold ?? 0,  icon: TrendingUp, color: "bg-green-500" },
+    {
+      label: "Doanh thu",
+      value: (data?.totalRevenue ?? 0).toLocaleString("vi-VN", { style: "currency", currency: "VND" }),
+      icon: DollarSign,
+      color: "bg-orange-500",
+      isString: true,
+    },
   ];
 
   return (
@@ -65,7 +121,9 @@ export default function AdminDashboard() {
                       <s.icon size={22} className="text-white" />
                     </div>
                     <div>
-                      <div className="text-2xl font-bold text-slate-800">{s.value.toLocaleString()}</div>
+                      <div className="text-2xl font-bold text-slate-800">
+                        {s.isString ? s.value : (s.value as number).toLocaleString()}
+                      </div>
                       <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
                     </div>
                   </div>

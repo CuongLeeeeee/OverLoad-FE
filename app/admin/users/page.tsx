@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRequireRole } from "@/lib/useAuth";
 import AdminSidebar from "@/components/layout/AdminSidebar";
 import AdminNavbar from "@/components/layout/AdminNavbar";
@@ -19,15 +19,18 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
 const ROLES = ["Student", "Instructor", "Manager", "Admin"];
 
 export default function AdminUsers() {
-  useRequireRole("Admin");
+  // ✅ Phải nhận giá trị trả về và guard trước khi render
+  const roleChecked = useRequireRole("Admin");
 
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("ol_access_token") : null;
+  // ✅ Token lấy trong function, tránh null khi SSR
+  const getToken = () => localStorage.getItem("ol_access_token");
 
-  const fetchUsers = () => {
+  const fetchUsers = useCallback(() => {
+    const token = getToken();
     setLoading(true);
     fetch(`${BASE_URL}/api/admin/users?search=${search}&pageSize=50`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -36,11 +39,15 @@ export default function AdminUsers() {
       .then((res) => setUsers(res.data ?? []))
       .catch(console.error)
       .finally(() => setLoading(false));
-  };
+  }, [search]);
 
-  useEffect(() => { fetchUsers(); }, [search]);
+  useEffect(() => {
+    // ✅ Chỉ fetch khi đã xác nhận quyền Admin
+    if (roleChecked) fetchUsers();
+  }, [search, roleChecked, fetchUsers]);
 
   const changeRole = async (id: number, role: string) => {
+    const token = getToken();
     await fetch(`${BASE_URL}/api/admin/users/${id}/role`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -50,12 +57,16 @@ export default function AdminUsers() {
   };
 
   const toggleLock = async (id: number) => {
+    const token = getToken();
     await fetch(`${BASE_URL}/api/admin/users/${id}/lock`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
     });
     fetchUsers();
   };
+
+  // ✅ Không render gì nếu chưa xác nhận quyền (tránh flash UI)
+  if (!roleChecked) return null;
 
   return (
     <div className="flex min-h-screen bg-[#eef2fb]">
@@ -84,7 +95,10 @@ export default function AdminUsers() {
                 <thead className="bg-slate-50 border-b border-slate-100">
                   <tr>
                     {["Người dùng", "Email", "Role", "Trạng thái", "Ngày tạo", "Hành động"].map((h) => (
-                      <th key={h} className="text-left px-5 py-3.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                      <th
+                        key={h}
+                        className="text-left px-5 py-3.5 text-xs font-semibold text-slate-500 uppercase tracking-wide"
+                      >
                         {h}
                       </th>
                     ))}
@@ -109,17 +123,24 @@ export default function AdminUsers() {
                             onChange={(e) => changeRole(u.id, e.target.value)}
                             className="appearance-none bg-blue-50 text-blue-600 text-xs font-semibold px-3 py-1.5 rounded-lg pr-7 cursor-pointer border-0 outline-none"
                           >
-                            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                            {ROLES.map((r) => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
                           </select>
-                          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
+                          <ChevronDown
+                            size={12}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none"
+                          />
                         </div>
                       </td>
                       <td className="px-5 py-4">
-                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                          u.isLocked
-                            ? "bg-red-50 text-red-500"
-                            : "bg-green-50 text-green-600"
-                        }`}>
+                        <span
+                          className={`text-xs px-2 py-1 rounded-full font-medium ${
+                            u.isLocked
+                              ? "bg-red-50 text-red-500"
+                              : "bg-green-50 text-green-600"
+                          }`}
+                        >
                           {u.isLocked ? "Đã khóa" : "Hoạt động"}
                         </span>
                       </td>

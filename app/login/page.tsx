@@ -19,17 +19,22 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const res = await authApi.login({ email: form.email, password: form.password });
+      // Ghi localStorage trước, sau đó mới navigate
       setToken(res.accessToken);
       setRefreshToken(res.refreshToken);
       saveUser(res.user);
+
+      // Dùng setTimeout để đảm bảo localStorage flush xong trước khi navigate
       const userRole = res.user.role;
-      if (userRole === "Admin") {
-        router.push("/admin");
-      } else if (userRole === "Manager") {
-        router.push("/manager");
-      } else {
-        router.push("/home");
-      }
+      setTimeout(() => {
+        if (userRole === "Admin") {
+          router.push("/admin");
+        } else if (userRole === "Manager") {
+          router.push("/manager");
+        } else {
+          router.push("/home");
+        }
+      }, 50);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
     } finally {

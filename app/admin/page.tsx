@@ -39,7 +39,7 @@ async function safeFetch<T>(url: string, token: string | null): Promise<T | null
 }
 
 export default function AdminDashboard() {
-  useRequireRole("Admin");
+  const roleChecked = useRequireRole("Admin");
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -100,6 +100,8 @@ export default function AdminDashboard() {
       isString: true,
     },
   ];
+
+  if (!roleChecked) return null;
 
   return (
     <div className="flex min-h-screen bg-[#eef2fb]">

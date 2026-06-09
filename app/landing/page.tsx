@@ -1,6 +1,8 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { isLoggedIn } from "@/lib/auth";
 
 /* ─── tiny hook: IntersectionObserver reveal ─── */
 function useReveal() {
@@ -131,10 +133,12 @@ const FAQS = [
 
 /* ─── Component ─── */
 export default function LandingPage() {
+  const router = useRouter();
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
+    if (isLoggedIn()) router.replace("/home");
     const fn = () => setScrolled(window.scrollY > 40);
     window.addEventListener("scroll", fn);
     return () => window.removeEventListener("scroll", fn);
@@ -302,7 +306,7 @@ export default function LandingPage() {
             <Link href="/register" className="btn-primary" style={{ fontSize: 16, padding: "15px 36px" }}>
               🚀 Bắt đầu học miễn phí
             </Link>
-            <Link href="/" className="btn-outline" style={{ fontSize: 16, padding: "15px 36px" }}>
+            <Link href="/home" className="btn-outline" style={{ fontSize: 16, padding: "15px 36px" }}>
               Xem khóa học →
             </Link>
           </div>
@@ -443,7 +447,7 @@ export default function LandingPage() {
 
         <Reveal>
           <div style={{ textAlign: "center" }}>
-            <Link href="/" className="btn-outline">Xem tất cả khóa học →</Link>
+            <Link href="/home" className="btn-outline">Xem tất cả khóa học →</Link>
           </div>
         </Reveal>
       </section>
@@ -592,7 +596,7 @@ export default function LandingPage() {
               <Link href="/register" className="btn-primary" style={{ fontSize: 16, padding: "16px 40px" }}>
                 🚀 Bắt đầu miễn phí ngay
               </Link>
-              <Link href="/" className="btn-outline" style={{ fontSize: 16, padding: "16px 32px" }}>
+              <Link href="/home" className="btn-outline" style={{ fontSize: 16, padding: "16px 32px" }}>
                 Xem khóa học
               </Link>
             </div>

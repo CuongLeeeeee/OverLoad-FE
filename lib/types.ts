@@ -31,7 +31,7 @@ export interface User {
   fullName: string;
   avatarUrl?: string;
   bio?: string;
-  role: "Student" | "Instructor" | "Admin";
+  role: "Student" | "Instructor" | "Manager" | "Admin";
 }
 
 export interface CreateUserRequest {
@@ -40,7 +40,7 @@ export interface CreateUserRequest {
   fullName: string;
   avatarUrl?: string;
   bio?: string;
-  role: "Student";
+  role: "Student" | "Instructor" | "Manager" | "Admin";
 }
 
 // ===== Course =====

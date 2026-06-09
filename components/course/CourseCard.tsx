@@ -14,29 +14,9 @@ export default function CourseCard({ course }: { course: Course }) {
   const levelInfo = LEVEL_MAP[course.level] ?? { label: course.level, badge: "free" };
   const isFree = levelInfo.badge === "free";
 
-  const handleClick = async () => {
-    const user = getUser();
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-
-    setChecking(true);
-    try {
-      const enrollments = await enrollmentsApi.getByUser(user.id);
-      const alreadyEnrolled = enrollments.some((e) => e.courseId === course.id);
-      if (alreadyEnrolled) {
-        router.push(`/course/${course.id}`);
-      } else {
-        setShowPopup(true);
-      }
-    } catch {
-      // Nếu lỗi thì cứ hiện popup bình thường
-      setShowPopup(true);
-    } finally {
-      setChecking(false);
-    }
-  };
+  const handleClick = () => {
+  router.push(`/course/${course.id}`);
+};
 
   return (
     <>

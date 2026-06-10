@@ -32,7 +32,7 @@ export default function CodeEditor({ value, language, onChange, readOnly }: Prop
       <CodeMirror
         value={value}
         theme={oneDark}
-        extensions={[...getExtensions(language), fullHeightTheme]}
+        extensions={[...getExtensions(language), fullHeightTheme, EditorView.lineWrapping]}
         onChange={onChange}
         readOnly={readOnly}
         basicSetup={{

@@ -1,16 +1,92 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
-import parse, { domToReact, HTMLReactParserOptions, Element } from "html-react-parser";
+import { useState, useRef, useEffect, useMemo } from "react";
+import parse, { domToReact, Element } from "html-react-parser";
 import { Course, Lesson } from "@/lib/types";
 import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw } from "lucide-react";
 import CodeEditor from "./CodeEditor";
 import LivePreview from "./LivePreview";
+import { getUser } from "@/lib/auth";
+import { progressApi } from "@/lib/api";
 
 interface Props {
   lesson: Lesson;
   course: Course;
   activeTab: "desc" | "qa" | "author";
   onTabChange: (tab: "desc" | "qa" | "author") => void;
+}
+
+interface CheckpointData {
+  stepIndex: number;
+  question: string;
+  correctAnswer: string;
+  percentage: number;
+}
+
+interface CheckpointOverlayProps {
+  question: string;
+  correctAnswer: string;
+  onSolve: () => void;
+}
+
+function CheckpointOverlay({ question, correctAnswer, onSolve }: CheckpointOverlayProps) {
+  const [value, setValue] = useState("");
+  const [isError, setIsError] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (value.trim().toLowerCase() === correctAnswer.trim().toLowerCase()) {
+      setIsError(false);
+      onSolve();
+    } else {
+      setIsError(true);
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+      <div className="bg-white/95 border border-white/60 p-8 rounded-3xl max-w-sm w-full shadow-2xl flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-200">
+        <div className="bg-blue-50 text-blue-600 text-xs font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-4">
+          Thử thách Q&A
+        </div>
+        <h3 className="text-slate-800 font-bold text-lg mb-6 leading-snug">
+          {question}
+        </h3>
+        <form onSubmit={handleSubmit} className="w-full">
+          <input
+            type="text"
+            value={value}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setIsError(false);
+            }}
+            placeholder="Nhập câu trả lời của bạn..."
+            className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-xl text-sm focus:outline-none transition-all ${
+              isError
+                ? "border-red-500 focus:ring-4 focus:ring-red-100"
+                : isFocused
+                ? "border-blue-500 focus:ring-4 focus:ring-blue-100"
+                : "border-slate-200 focus:border-blue-500"
+            }`}
+            autoFocus
+          />
+          {isError && (
+            <p className="text-red-500 text-xs font-semibold mt-2 flex items-center justify-center gap-1">
+              ⚠️ Câu trả lời chưa chính xác. Hãy thử lại!
+            </p>
+          )}
+          <button
+            type="submit"
+            className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-500/20 active:scale-[0.98] transition-all"
+          >
+            Kiểm tra đáp án
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 // Detect language from lesson template (simple heuristic)
@@ -48,9 +124,80 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
     return results;
   }
 
-  const allSteps = lesson.content ? getAllPreCodes(lesson.content) : [];
+  const allSteps = useMemo(() => (lesson.content ? getAllPreCodes(lesson.content) : []), [lesson.content]);
   const totalSteps = allSteps.length;
-  const progressPercent = totalSteps > 0 ? Math.round(((activeStepIndex + 1) / totalSteps) * 100) : 0;
+
+  const leftScrollContainerRef = useRef<HTMLDivElement>(null);
+  const isAutoScrollingRef = useRef(false);
+
+  // Scroll tracking and locking states
+  const [scrollPercentage, setScrollPercentage] = useState(0);
+  const [isLocked, setIsLocked] = useState(false);
+  const [completedCheckpoints, setCompletedCheckpoints] = useState<number[]>([]);
+  const [activeCheckpoint, setActiveCheckpoint] = useState<CheckpointData | null>(null);
+
+  const lockPositionRef = useRef<number | null>(null);
+  const lastSaveTimeRef = useRef(0);
+
+  const user = getUser();
+  const userId = user?.id;
+
+  // Load progress from backend
+  useEffect(() => {
+    if (!userId || !lesson.id) {
+      setCompletedCheckpoints([]);
+      setIsLocked(false);
+      setScrollPercentage(0);
+      return;
+    }
+
+    // Skip if no auth token
+    const token = typeof window !== "undefined" ? localStorage.getItem("ol_access_token") : null;
+    if (!token) return;
+
+    progressApi.getUserLesson(userId, lesson.id)
+      .then((res) => {
+        if (res) {
+          const completedCount = res.unlockedCheckpointIndex;
+          const completedList: number[] = [];
+          for (let i = 0; i < completedCount; i++) {
+            completedList.push(i);
+          }
+          setCompletedCheckpoints(completedList);
+          setIsLocked(false);
+
+          // Restore scroll position
+          setTimeout(() => {
+            const container = leftScrollContainerRef.current;
+            if (container && res.lastScrollPercentage > 0) {
+              const scrollHeight = container.scrollHeight - container.clientHeight;
+              container.scrollTop = (res.lastScrollPercentage / 100) * scrollHeight;
+              setScrollPercentage(res.lastScrollPercentage);
+            }
+          }, 300);
+        }
+      })
+      .catch(() => {
+        // Silently ignore auth/network errors
+      });
+  }, [lesson.id, userId]);
+
+  // Save progress helper
+  const saveProgress = (percentage: number, completedCount: number, isFinished = false) => {
+    if (!userId || !lesson.id) return;
+    // Skip if no auth token
+    const token = typeof window !== "undefined" ? localStorage.getItem("ol_access_token") : null;
+    if (!token) return;
+    progressApi.upsert({
+      userId,
+      lessonId: lesson.id,
+      lastScrollPercentage: percentage,
+      unlockedCheckpointIndex: completedCount,
+      completed: isFinished || percentage >= 98,
+      lastPositionSeconds: 0,
+      watchTimeSeconds: 0
+    }).catch(() => { /* silently ignore */ });
+  };
 
   // Reset editor code & language whenever the lesson changes
   useEffect(() => {
@@ -64,13 +211,89 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
     }
     setUserCode(code);
     setRunKey(k => k + 1);
-  }, [lesson.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [lesson.id, allSteps]);
 
-  const leftScrollContainerRef = useRef<HTMLDivElement>(null);
-  const isAutoScrollingRef = useRef(false);
+  // Parse checkpoints from lesson content
+  const checkpoints = useMemo(() => {
+    if (!lesson.content) return [];
+    
+    const checkpointsList: CheckpointData[] = [];
+    const preRegex = /<pre[^>]*>[\s\S]*?<\/pre>/gi;
+    const checkpointRegex = /<checkpoint\s+([^>]*?)>/gi;
+    
+    const preMatches = [...lesson.content.matchAll(preRegex)];
+    const checkpointMatches = [...lesson.content.matchAll(checkpointRegex)];
+    
+    checkpointMatches.forEach((match) => {
+      const matchIndex = match.index ?? 0;
+      // Find how many pre blocks appear before this checkpoint match
+      const preCountBefore = preMatches.filter(pm => (pm.index ?? 0) < matchIndex).length;
+      const stepIndex = Math.max(0, preCountBefore - 1);
+      
+      const attrString = match[1];
+      const questionMatch = attrString.match(/question="([^"]*)"/i);
+      const answerMatch = attrString.match(/answer="([^"]*)"/i);
+      const percentageMatch = attrString.match(/percentage="([^"]*)"/i);
+      
+      if (questionMatch && answerMatch) {
+        checkpointsList.push({
+          stepIndex,
+          question: questionMatch[1],
+          correctAnswer: answerMatch[1],
+          percentage: percentageMatch ? parseFloat(percentageMatch[1]) : 99
+        });
+      }
+    });
+    
+    return checkpointsList;
+  }, [lesson.content]);
+
+  // Split HTML into step chunks
+  const stepChunks = useMemo(() => {
+    let cleanHtml = lesson.content ? lesson.content.replace(/<checkpoint[^>]*>[\s\S]*?<\/checkpoint>/gi, "") : "";
+    cleanHtml = cleanHtml.trim();
+    
+    // Strip outer wrapping div if it exists
+    if (cleanHtml.startsWith("<div") && cleanHtml.endsWith("</div>")) {
+      const firstClose = cleanHtml.indexOf(">");
+      const lastOpen = cleanHtml.lastIndexOf("<");
+      if (firstClose !== -1 && lastOpen !== -1 && lastOpen > firstClose) {
+        cleanHtml = cleanHtml.slice(firstClose + 1, lastOpen).trim();
+      }
+    }
+    
+    if (!cleanHtml) return [];
+    
+    const regex = /([\s\S]*?<pre[^>]*>[\s\S]*?<\/pre>)/gi;
+    const matches = [...cleanHtml.matchAll(regex)];
+    
+    if (matches.length === 0) {
+      return [cleanHtml];
+    }
+    
+    const chunks = matches.map(m => m[0]);
+    
+    const lastIndex = matches[matches.length - 1].index ?? 0;
+    const lastMatchLength = matches[matches.length - 1][0].length;
+    const leftover = cleanHtml.slice(lastIndex + lastMatchLength).trim();
+    
+    if (leftover && leftover.replace(/<\/?div[^>]*>/gi, "").trim()) {
+      chunks[chunks.length - 1] += leftover;
+    }
+    
+    return chunks;
+  }, [lesson.content]);
 
   // Load step into editor
   function loadStep(stepIndex: number, code: string, scroll = true) {
+    // Check if the target step is locked behind an unsolved checkpoint
+    const hasUnsolvedCheckpointBefore = checkpoints.some(
+      cp => cp.stepIndex < stepIndex && !completedCheckpoints.includes(cp.stepIndex)
+    );
+    if (hasUnsolvedCheckpointBefore) {
+      return;
+    }
+
     setActiveStepIndex(stepIndex);
     setUserCode(code);
     setRunKey(k => k + 1);
@@ -80,7 +303,6 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
       if (el) {
         isAutoScrollingRef.current = true;
         el.scrollIntoView({ behavior: "smooth", block: "center" });
-        // Reset the flag after smooth scroll completes
         setTimeout(() => {
           isAutoScrollingRef.current = false;
         }, 800);
@@ -95,12 +317,12 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
 
     const observerOptions = {
       root: container,
-      rootMargin: "-25% 0px -45% 0px", // Trigger when step is in the middle 30% viewport band
+      rootMargin: "-25% 0px -45% 0px",
       threshold: 0,
     };
 
     const observer = new IntersectionObserver((entries) => {
-      if (isAutoScrollingRef.current) return;
+      if (isAutoScrollingRef.current || isLocked) return;
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
           const indexAttr = entry.target.getAttribute("data-step-index");
@@ -128,21 +350,73 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
     return () => {
       observer.disconnect();
     };
-  }, [lesson.id, allSteps]);
+  }, [lesson.id, allSteps, isLocked]);
+
+  // Checkpoint detection and locking
+  useEffect(() => {
+    if (isLocked) return;
+
+    const pendingCheckpoint = checkpoints.find(
+      cp => cp.stepIndex <= activeStepIndex && !completedCheckpoints.includes(cp.stepIndex)
+    );
+
+    if (pendingCheckpoint) {
+      setIsLocked(true);
+      if (leftScrollContainerRef.current) {
+        lockPositionRef.current = leftScrollContainerRef.current.scrollTop;
+      }
+      setActiveCheckpoint(pendingCheckpoint);
+    }
+  }, [activeStepIndex, checkpoints, completedCheckpoints, isLocked]);
+
+  const handleSolveCheckpoint = () => {
+    if (!activeCheckpoint) return;
+    const newCompleted = [...completedCheckpoints, activeCheckpoint.stepIndex];
+    setCompletedCheckpoints(newCompleted);
+    setIsLocked(false);
+    lockPositionRef.current = null;
+    setActiveCheckpoint(null);
+
+    // Save progress immediately
+    saveProgress(scrollPercentage, newCompleted.length);
+  };
+
+  const handleScroll = () => {
+    const container = leftScrollContainerRef.current;
+    if (!container) return;
+
+    if (isLocked && lockPositionRef.current !== null) {
+      container.scrollTop = lockPositionRef.current;
+      return;
+    }
+
+    const scrollTop = container.scrollTop;
+    const scrollHeight = container.scrollHeight - container.clientHeight;
+    const percentage = scrollHeight > 0 
+      ? Math.min(100, Math.max(0, (scrollTop / scrollHeight) * 100))
+      : 0;
+
+    setScrollPercentage(percentage);
+
+    // Throttled save progress
+    const now = Date.now();
+    if (now - lastSaveTimeRef.current > 5000) {
+      lastSaveTimeRef.current = now;
+      saveProgress(percentage, completedCheckpoints.length);
+    }
+  };
 
   const dividerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const verticalDividerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(50); // percentage for left column
   const leftWidthRef = useRef(leftWidth);
-  // Drag handling using pointer events for reliability
   const isDraggingRef = useRef(false);
   const startYRef = useRef(0);
   const startHeightRef = useRef<number | null>(null);
   const pointerIdRef = useRef<number | null>(null);
   const editorHeightRef = useRef(editorHeight);
 
-  // keep a ref copy of editorHeight so the pointer handlers don't close over stale values
   useEffect(() => {
     editorHeightRef.current = editorHeight;
   }, [editorHeight]);
@@ -152,7 +426,6 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
   }, [leftWidth]);
 
   useEffect(() => {
-    // Use an effect that mounts once to avoid reattaching listeners during drag
     const onPointerMove = (e: PointerEvent) => {
       if (!isDraggingRef.current || !containerRef.current || startHeightRef.current == null) return;
       const rect = containerRef.current.getBoundingClientRect();
@@ -172,34 +445,27 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
       window.removeEventListener("pointercancel", onPointerUp);
     };
 
-    const onPointerUp = (e?: PointerEvent) => {
-      // try to release pointer capture if possible
+    const onPointerUp = () => {
       try {
         if (pointerIdRef.current != null && dividerRef.current?.releasePointerCapture) {
           dividerRef.current.releasePointerCapture(pointerIdRef.current);
         }
-      } catch (err) {
-        // ignore
-      }
+      } catch {}
       finishDrag();
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      // start drag
       isDraggingRef.current = true;
       startYRef.current = e.clientY;
       startHeightRef.current = editorHeightRef.current ?? editorHeight;
       pointerIdRef.current = (e as any).pointerId ?? null;
       (document.body as HTMLBodyElement).style.userSelect = "none";
 
-      // ensure we continue to receive pointer events even if pointer moves outside the divider
       try {
         if (dividerRef.current?.setPointerCapture && pointerIdRef.current != null) {
           dividerRef.current.setPointerCapture(pointerIdRef.current);
         }
-      } catch (err) {
-        // ignore if not supported
-      }
+      } catch {}
 
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
@@ -214,10 +480,8 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerUp);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Vertical divider (left/right) pointer handling
   useEffect(() => {
     const isDraggingVRef = { current: false } as { current: boolean };
     const startXRef = { current: 0 } as { current: number };
@@ -275,7 +539,6 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const tabs = [
@@ -283,9 +546,6 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
     { id: "qa" as const, label: "Hỏi & Đáp", icon: MessageSquare },
     { id: "author" as const, label: "Ghi chú", icon: User },
   ];
-
-  // Track <pre> index during html-react-parser replace
-  let preCounter = 0;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -305,18 +565,32 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
         ))}
       </div>
 
+      {/* Progress Bar */}
+      <div className="bg-slate-50 border-b border-slate-100 px-6 py-2 shrink-0 flex items-center justify-between gap-4">
+        <div className="flex-1 flex items-center gap-3">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tiến trình</span>
+          <div className="flex-1 h-2 bg-slate-200/60 rounded-full overflow-hidden border border-slate-200/20">
+            <div
+              className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-300 ease-out"
+              style={{ width: `${scrollPercentage}%` }}
+            />
+          </div>
+        </div>
+        <span className="text-xs font-bold text-blue-600 min-w-[32px] text-right">
+          {Math.round(scrollPercentage)}%
+        </span>
+      </div>
+
       {/* Tab: Mô tả */}
       {activeTab === "desc" && (
         <div ref={containerRef} className="flex-1 overflow-hidden flex flex-row">
           {/* Left: Content Wrapper */}
-          <div style={{ width: `${leftWidth}%` }} className="border-r border-slate-100 flex flex-row overflow-hidden h-full bg-white">
+          <div style={{ width: `${leftWidth}%` }} className="border-r border-slate-100 flex flex-row overflow-hidden h-full bg-white relative">
             
             {/* Left Child: Vertical Timeline */}
             {totalSteps > 1 && (
               <div className="w-10 shrink-0 flex flex-col items-center py-8 bg-slate-50/30 border-r border-slate-100/50 relative h-full">
-                {/* Background line */}
                 <div className="absolute top-8 bottom-8 w-[2px] bg-slate-100" />
-                {/* Active progress line fill */}
                 <div
                   className="absolute top-8 w-[2px] bg-blue-500 transition-all duration-500 ease-out"
                   style={{
@@ -324,7 +598,6 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
                     maxHeight: "calc(100% - 64px)"
                   }}
                 />
-                {/* Step dots */}
                 <div className="absolute top-8 bottom-8 flex flex-col justify-between items-center w-full">
                   {allSteps.map((_, i) => {
                     const isActive = i === activeStepIndex;
@@ -351,133 +624,122 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
             )}
 
             {/* Right Child: Scrollable Lesson Text Content */}
-            <div ref={leftScrollContainerRef} className="flex-1 overflow-y-auto p-6">
-              <h2 className="text-xl font-bold text-slate-800 mb-3">{lesson.title}</h2>
-
-              {/* Stats */}
-              <div className="flex items-center gap-4 text-sm text-slate-500 mb-4">
-                <span className="flex items-center gap-1.5">
-                  <Clock size={14} /> {lesson.durationMinutes} phút
-                </span>
-                {lesson.isFree && (
-                  <span className="text-green-600 font-medium text-xs bg-green-50 px-2 py-0.5 rounded-full">
-                    Miễn phí
+            <div
+              ref={leftScrollContainerRef}
+              onScroll={handleScroll}
+              className="flex-1 overflow-y-auto p-8 space-y-6 scroll-smooth"
+            >
+              {/* Introduction Card */}
+              <div className="border border-slate-100 bg-slate-50/30 p-6 rounded-2xl">
+                <h2 className="text-xl font-bold text-slate-800 mb-3">{lesson.title}</h2>
+                <div className="flex items-center gap-4 text-xs text-slate-500 mb-4">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Clock size={13} /> {lesson.durationMinutes} phút
                   </span>
+                  {lesson.isFree && (
+                    <span className="text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded-full">
+                      Miễn phí
+                    </span>
+                  )}
+                </div>
+                {lesson.description && (
+                  <p className="text-sm text-slate-600 leading-relaxed">{lesson.description}</p>
                 )}
-              </div>
-
-              {/* Description */}
-              {lesson.description && (
-                <p className="text-sm text-slate-600 leading-relaxed mb-5">{lesson.description}</p>
-              )}
-
-            {/* Course stats */}
-            <div className="grid grid-cols-2 gap-3 mb-6">
-              <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl">
-                <BookOpen size={16} className="text-orange-500" />
-                <div>
-                  <div className="text-sm font-bold text-slate-800">{course.level}</div>
-                  <div className="text-xs text-slate-400">Trình độ</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl">
-                <Users size={16} className="text-orange-500" />
-                <div>
-                  <div className="text-sm font-bold text-slate-800">{course.category}</div>
-                  <div className="text-xs text-slate-400">Danh mục</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Lesson content - displayed as formatted HTML/text with step tracking */}
-            {lesson.content && (
-              <div className="mb-6">
-                <h3 className="text-sm font-semibold text-slate-700 mb-3">Nội dung bài học</h3>
-                <div className="prose prose-sm max-w-none text-slate-600 leading-relaxed">
-                  <style>{`
-                    .lesson-content { font-family: 'Be Vietnam Pro', sans-serif !important; }
-                    .lesson-content div, .lesson-content p, .lesson-content span, .lesson-content h1, .lesson-content h2, .lesson-content h3, .lesson-content h4, .lesson-content h5, .lesson-content h6, .lesson-content li, .lesson-content ul, .lesson-content ol, .lesson-content strong, .lesson-content b, .lesson-content em, .lesson-content i { font-family: 'Be Vietnam Pro', sans-serif !important; }
-                    .lesson-content h1 { font-size: 1.875rem; font-weight: 700; margin: 1.5rem 0 1rem; color: #1e293b; }
-                    .lesson-content h2 { font-size: 1.5rem; font-weight: 700; margin: 1.25rem 0 0.75rem; color: #334155; }
-                    .lesson-content h3 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; color: #475569; }
-                    .lesson-content h4 { font-size: 1.1rem; font-weight: 600; margin: 0.75rem 0 0.5rem; color: #475569; }
-                    .lesson-content h5, .lesson-content h6 { font-size: 1rem; font-weight: 600; margin: 0.5rem 0; color: #475569; }
-                    .lesson-content p { margin: 0.75rem 0; line-height: 1.6; }
-                    .lesson-content a { color: #2563eb; text-decoration: underline; }
-                    .lesson-content a:hover { color: #1d4ed8; }
-                    .lesson-content ul, .lesson-content ol { margin: 1rem 0; padding-left: 2rem; }
-                    .lesson-content li { margin: 0.5rem 0; }
-                    .lesson-content code { background: #f1f5f9; color: #e11d48; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-family: 'Courier New', monospace; font-size: 0.875em; }
-                    .lesson-content pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 1rem 0; }
-                    .lesson-content pre code { background: none; color: inherit; padding: 0; }
-                    .lesson-content blockquote { border-left: 4px solid #3b82f6; padding-left: 1rem; margin: 1rem 0; color: #64748b; font-style: italic; }
-                    .lesson-content table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-                    .lesson-content th, .lesson-content td { border: 1px solid #cbd5e1; padding: 0.75rem; text-align: left; }
-                    .lesson-content th { background: #f1f5f9; font-weight: 600; }
-                    .lesson-content strong, .lesson-content b { font-weight: 700; color: #1e293b; }
-                    .lesson-content em, .lesson-content i { font-style: italic; }
-                  `}</style>
-                  <div className="lesson-content">
-                    {(() => { preCounter = 0; return null; })()}
-                    {parse(lesson.content, {
-  replace(node) {
-    if (node instanceof Element && node.name === "pre") {
-      const stepIdx = preCounter++;
-      const code = node.children
-        .map((c: any) => c.type === "text" ? c.data : c.children?.map((cc: any) => cc.data ?? "").join("") ?? "")
-        .join("");
-      const isActive = stepIdx === activeStepIndex;
-      const stepCode = allSteps[stepIdx] ?? code.trim();
-      return (
-        <div
-          className="step-block-wrapper"
-          data-step-index={stepIdx}
-          id={`step-card-${stepIdx}`}
-          style={{ position: "relative", margin: "1rem 0" }}
-        >
-          {/* Step badge */}
-          <div style={{
-            position: "absolute", top: -10, left: 12, zIndex: 2,
-            background: isActive ? "linear-gradient(135deg, #3b82f6, #6366f1)" : "#64748b",
-            color: "#fff", fontSize: 10, fontWeight: 700,
-            padding: "2px 10px", borderRadius: 10,
-            boxShadow: isActive ? "0 2px 8px rgba(59,130,246,0.3)" : "none",
-            transition: "all 0.3s ease",
-          }}>
-            Step {stepIdx + 1}
-          </div>
-          <pre
-            onClick={() => loadStep(stepIdx, stepCode)}
-            title={`Bấm để chạy Step ${stepIdx + 1}`}
-            style={{
-              background: "#1e293b", color: "#e2e8f0", padding: "1.25rem 1rem 1rem",
-              borderRadius: "0.5rem", cursor: "pointer", position: "relative",
-              border: isActive ? "2px solid #3b82f6" : "2px solid transparent",
-              boxShadow: isActive ? "0 0 0 3px rgba(59,130,246,0.15)" : "none",
-              transition: "all 0.3s ease",
-            }}
-            onMouseEnter={e => {
-              if (!isActive) e.currentTarget.style.borderColor = "#475569";
-            }}
-            onMouseLeave={e => {
-              if (!isActive) e.currentTarget.style.borderColor = "transparent";
-            }}
-          >
-            <span style={{ position: "absolute", top: 6, right: 8, fontSize: 10, color: isActive ? "#60a5fa" : "#64748b" }}>
-              {isActive ? "✓ Đang chạy" : "▶ Bấm để chạy"}
-            </span>
-            {domToReact(node.children as any)}
-          </pre>
-        </div>
-      );
-    }
-  },
-})}
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  <div className="flex items-center gap-2 p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
+                    <BookOpen size={16} className="text-orange-500" />
+                    <div>
+                      <div className="text-xs font-bold text-slate-800">{course.level}</div>
+                      <div className="text-[10px] text-slate-400">Trình độ</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
+                    <Users size={16} className="text-orange-500" />
+                    <div>
+                      <div className="text-xs font-bold text-slate-800">{course.category}</div>
+                      <div className="text-[10px] text-slate-400">Danh mục</div>
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {/* Step chunks rendered as premium cards */}
+              {stepChunks.length > 0 && (
+                <div className="pb-[40vh] space-y-16">
+                  {stepChunks.map((chunk, stepIdx) => {
+                    const isActive = stepIdx === activeStepIndex;
+                    const stepCode = allSteps[stepIdx] ?? "";
+                    return (
+                      <div
+                        key={stepIdx}
+                        className={`step-block-wrapper p-8 border-2 rounded-[24px] transition-all duration-500 ease-out cursor-pointer relative ${
+                          isActive
+                            ? "opacity-100 scale-[1.02] border-blue-500 shadow-xl bg-gradient-to-br from-white to-blue-50/20"
+                            : "opacity-40 scale-[0.98] border-slate-200 bg-white hover:opacity-60"
+                        }`}
+                        data-step-index={stepIdx}
+                        id={`step-card-${stepIdx}`}
+                        onClick={() => loadStep(stepIdx, stepCode)}
+                      >
+                        <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+                          <span
+                            className={`text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider transition-colors duration-300 ${
+                              isActive ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            Bước {stepIdx + 1} / {stepChunks.length}
+                          </span>
+                          {isActive && (
+                            <span className="text-xs font-bold text-blue-600 animate-pulse flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block" />
+                              Đang chạy
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="prose prose-sm max-w-none text-slate-600 leading-relaxed">
+                          <style>{`
+                            .step-content div, .step-content p, .step-content span, .step-content h1, .step-content h2, .step-content h3, .step-content h4, .step-content h5, .step-content h6, .step-content li, .step-content ul, .step-content ol, .step-content strong, .step-content b, .step-content em, .step-content i { font-family: inherit !important; }
+                            .step-content h1 { font-size: 1.5rem; font-weight: 700; margin: 1.25rem 0 0.75rem; color: #1e293b; }
+                            .step-content h2 { font-size: 1.25rem; font-weight: 700; margin: 1rem 0 0.5rem; color: #334155; }
+                            .step-content h3 { font-size: 1.1rem; font-weight: 600; margin: 0.75rem 0 0.5rem; color: #475569; }
+                            .step-content p { margin: 0.75rem 0; line-height: 1.6; }
+                            .step-content code { background: #f1f5f9; color: #e11d48; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.875em; }
+                            .step-content pre code { background: none; color: inherit; padding: 0; border-radius: 0; font-size: 0.8125rem; line-height: 1.7; }
+                          `}</style>
+                          <div className="step-content">
+                            {parse(chunk, {
+                              replace(node) {
+                                if (node instanceof Element && node.name === "pre") {
+                                  return (
+                                    <pre
+                                      className={`bg-slate-900 text-slate-100 p-4 rounded-xl whitespace-pre-wrap break-all border transition-colors ${
+                                        isActive ? "border-blue-400" : "border-slate-800"
+                                      }`}
+                                    >
+                                      <code>{domToReact(node.children as any)}</code>
+                                    </pre>
+                                  );
+                                }
+                              }
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Checkpoint Overlay */}
+            {isLocked && activeCheckpoint && (
+              <CheckpointOverlay
+                question={activeCheckpoint.question}
+                correctAnswer={activeCheckpoint.correctAnswer}
+                onSolve={handleSolveCheckpoint}
+              />
             )}
-          </div>
           </div>
 
           {/* Vertical divider: draggable to resize left/right */}
@@ -590,4 +852,5 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
     </div>
   );
 }
+
 

@@ -183,7 +183,7 @@ export default function ProfilePage() {
         
         {/* Back Button */}
         <Link
-          href="/"
+          href={user.role === "Instructor" || user.role === "Admin" ? "/instructor/dashboard" : "/"}
           className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 transition-colors text-xs font-semibold mb-4 group inline-flex"
         >
           <ArrowLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" />
@@ -223,45 +223,50 @@ export default function ProfilePage() {
                   <span className="text-[10px] bg-blue-50 text-blue-600 border border-blue-150 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
                     {roleLabel[user.role] ?? user.role}
                   </span>
-                  <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
-                    isPro 
-                      ? "bg-purple-50 text-purple-600 border-purple-150" 
-                      : "bg-indigo-50 text-indigo-600 border border-indigo-200"
-                  }`}>
-                    {isPro ? "Gói PRO" : "Gói Free"}
-                  </span>
+                  
+                  {user.role === "Student" && (
+                    <>
+                      <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+                        isPro 
+                          ? "bg-purple-50 text-purple-600 border-purple-150" 
+                          : "bg-indigo-50 text-indigo-600 border border-indigo-200"
+                      }`}>
+                        {isPro ? "Gói PRO" : "Gói Free"}
+                      </span>
 
-                  {/* Student verification small button */}
-                  {user.studentVerificationStatus === "APPROVED" ? (
-                    <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-0.5 rounded font-bold uppercase tracking-wider flex items-center gap-1 select-none">
-                      <ShieldCheck size={11} className="text-emerald-500" />
-                      Đã xác minh thành công
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => setIsVerificationModalOpen(true)}
-                      className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase tracking-wider flex items-center gap-1 active:scale-95 transition-all ${
-                        user.studentVerificationStatus === "PENDING"
-                          ? "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100/60"
-                          : user.studentVerificationStatus === "REJECTED"
-                          ? "bg-red-50 text-red-650 border-red-200 hover:bg-red-100/60"
-                          : "bg-slate-50 text-slate-655 border-slate-200 hover:bg-slate-100"
-                      }`}
-                    >
-                      <Shield size={11} className={
-                        user.studentVerificationStatus === "PENDING"
-                          ? "text-amber-500 animate-pulse"
-                          : user.studentVerificationStatus === "REJECTED"
-                          ? "text-red-500"
-                          : "text-slate-400"
-                      } />
-                      {user.studentVerificationStatus === "PENDING" && "Đang chờ xác minh"}
-                      {user.studentVerificationStatus === "REJECTED" && "Xác minh bị từ chối"}
-                      {user.studentVerificationStatus === "NONE" && "Xác minh sinh viên"}
-                    </button>
+                      {/* Student verification small button */}
+                      {user.studentVerificationStatus === "APPROVED" ? (
+                        <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-0.5 rounded font-bold uppercase tracking-wider flex items-center gap-1 select-none">
+                          <ShieldCheck size={11} className="text-emerald-500" />
+                          Đã xác minh thành công
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setIsVerificationModalOpen(true)}
+                          className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase tracking-wider flex items-center gap-1 active:scale-95 transition-all ${
+                            user.studentVerificationStatus === "PENDING"
+                              ? "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100/60"
+                              : user.studentVerificationStatus === "REJECTED"
+                              ? "bg-red-50 text-red-650 border-red-200 hover:bg-red-100/60"
+                              : "bg-slate-50 text-slate-655 border-slate-200 hover:bg-slate-100"
+                          }`}
+                        >
+                          <Shield size={11} className={
+                            user.studentVerificationStatus === "PENDING"
+                              ? "text-amber-500 animate-pulse"
+                              : user.studentVerificationStatus === "REJECTED"
+                              ? "text-red-500"
+                              : "text-slate-400"
+                          } />
+                          {user.studentVerificationStatus === "PENDING" && "Đang chờ xác minh"}
+                          {user.studentVerificationStatus === "REJECTED" && "Xác minh bị từ chối"}
+                          {user.studentVerificationStatus === "NONE" && "Xác minh sinh viên"}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
-                {isPro && proExpiration && (
+                {user.role === "Student" && isPro && proExpiration && (
                   <span className="text-xs text-purple-655 font-semibold flex items-center gap-1 mt-0.5 bg-purple-50/70 border border-purple-100 rounded-lg px-2 py-1 max-w-fit">
                     <Clock size={12} className="stroke-[2.5] text-purple-500" />
                     PRO {getRemainingTimeStr(proExpiration)}
@@ -270,51 +275,56 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            <div className="w-full h-px bg-slate-100 mb-6" />
-
-            {/* Balance Widget */}
-            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center justify-between relative overflow-hidden">
-              <div className="absolute right-0 bottom-0 w-16 h-16 bg-blue-50 rounded-full blur-lg pointer-events-none" />
-              <div className="z-10">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Số dư tài khoản</span>
-                <span className="text-lg font-black text-slate-800 mt-1 block">
-                  {loadingBalance ? "..." : `${(balance ?? 0).toLocaleString("vi-VN")} VND`}
-                </span>
-              </div>
-              <div className="w-10 h-10 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-center text-blue-600 shrink-0">
-                <Wallet size={18} className="stroke-[1.5]" />
-              </div>
-            </div>
+            {/* Balance Widget (Only for Students) */}
+            {user.role === "Student" && (
+              <>
+                <div className="w-full h-px bg-slate-100 mb-6" />
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex items-center justify-between relative overflow-hidden">
+                  <div className="absolute right-0 bottom-0 w-16 h-16 bg-blue-50 rounded-full blur-lg pointer-events-none" />
+                  <div className="z-10">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Số dư tài khoản</span>
+                    <span className="text-lg font-black text-slate-800 mt-1 block">
+                      {loadingBalance ? "..." : `${(balance ?? 0).toLocaleString("vi-VN")} VND`}
+                    </span>
+                  </div>
+                  <div className="w-10 h-10 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-center text-blue-600 shrink-0">
+                    <Wallet size={18} className="stroke-[1.5]" />
+                  </div>
+                </div>
+              </>
+            )}
 
           </div>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 text-center hover:shadow-md hover:border-slate-200 transition-all">
-            <div className="w-9 h-9 bg-orange-50 rounded-xl flex items-center justify-center mx-auto mb-2">
-              <BookOpen size={16} className="text-orange-400" />
+        {/* Stats Grid (Only for Students) */}
+        {user.role === "Student" && (
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 text-center hover:shadow-md hover:border-slate-200 transition-all">
+              <div className="w-9 h-9 bg-orange-50 rounded-xl flex items-center justify-center mx-auto mb-2">
+                <BookOpen size={16} className="text-orange-400" />
+              </div>
+              <div className="text-lg font-bold text-slate-800 leading-none">{coursesCount}</div>
+              <div className="text-[10px] text-slate-450 mt-1 font-semibold">Khóa học</div>
             </div>
-            <div className="text-lg font-bold text-slate-800 leading-none">{coursesCount}</div>
-            <div className="text-[10px] text-slate-450 mt-1 font-semibold">Khóa học</div>
-          </div>
 
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 text-center hover:shadow-md hover:border-slate-200 transition-all">
-            <div className="w-9 h-9 bg-green-50 rounded-xl flex items-center justify-center mx-auto mb-2">
-              <Award size={16} className="text-green-400" />
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 text-center hover:shadow-md hover:border-slate-200 transition-all">
+              <div className="w-9 h-9 bg-green-50 rounded-xl flex items-center justify-center mx-auto mb-2">
+                <Award size={16} className="text-green-400" />
+              </div>
+              <div className="text-lg font-bold text-slate-800 leading-none">0</div>
+              <div className="text-[10px] text-slate-450 mt-1 font-semibold">Chứng chỉ</div>
             </div>
-            <div className="text-lg font-bold text-slate-800 leading-none">0</div>
-            <div className="text-[10px] text-slate-450 mt-1 font-semibold">Chứng chỉ</div>
-          </div>
 
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 text-center hover:shadow-md hover:border-slate-200 transition-all">
-            <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center mx-auto mb-2">
-              <Clock size={16} className="text-blue-400" />
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 text-center hover:shadow-md hover:border-slate-200 transition-all">
+              <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center mx-auto mb-2">
+                <Clock size={16} className="text-blue-400" />
+              </div>
+              <div className="text-lg font-bold text-slate-800 leading-none">0h</div>
+              <div className="text-[10px] text-slate-450 mt-1 font-semibold">Học tập</div>
             </div>
-            <div className="text-lg font-bold text-slate-800 leading-none">0h</div>
-            <div className="text-[10px] text-slate-450 mt-1 font-semibold">Học tập</div>
           </div>
-        </div>
+        )}
 
       </div>
 

@@ -22,7 +22,16 @@ export default function LoginPage() {
       setToken(res.accessToken);
       setRefreshToken(res.refreshToken);
       saveUser(res.user);
-      router.push("/");
+
+      // Redirect based on role
+      const role = res.user.role;
+      if (role === "Instructor") {
+        router.push("/instructor/dashboard");
+      } else if (role === "Admin") {
+        router.push("/");
+      } else {
+        router.push("/");
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
     } finally {

@@ -8,11 +8,22 @@ import {
   Plus, Edit, Trash2, BookOpen, AlertCircle, RefreshCw, Layers, Sparkles, DollarSign, TrendingUp, History
 } from "lucide-react";
 
-export default function InstructorDashboard() {
+import { useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+
+function InstructorDashboardContent() {
   const router = useRouter();
   
+  const searchParams = useSearchParams();
+  const activeCategory = searchParams.get("category")?.toLowerCase() || "";
+
   // States
   const [courses, setCourses] = useState<Course[]>([]);
+  const filteredCourses = useMemo(() => {
+    if (!activeCategory) return courses;
+    return courses.filter((c: Course) => c.category?.toLowerCase() === activeCategory);
+  }, [courses, activeCategory]);
+
   const [loadingCourses, setLoadingCourses] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -48,7 +59,9 @@ export default function InstructorDashboard() {
     setErrorMsg("");
     try {
       const res = await coursesApi.getAll({ pageSize: 100 });
-      setCourses(res.items || []);
+      // Filter out system courses (PRO upgrade, deposit) — they are not real instructor courses
+      const allCourses = res.items || [];
+      setCourses(allCourses.filter((c: Course) => c.category?.toLowerCase() !== "system"));
     } catch (err: any) {
       setErrorMsg(err.message || "Không thể tải danh sách khóa học.");
     } finally {
@@ -223,7 +236,7 @@ export default function InstructorDashboard() {
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            <Layers size={13} className="text-slate-400" /> Các khóa học của bạn ({courses.length})
+            <Layers size={13} className="text-slate-400" /> Các khóa học của bạn ({filteredCourses.length})
           </h2>
           <button onClick={fetchCourses} className="text-slate-400 hover:text-slate-655 transition-colors">
             <RefreshCw size={13} />
@@ -234,14 +247,14 @@ export default function InstructorDashboard() {
           <div className="py-12 text-center text-xs text-slate-400 font-semibold uppercase tracking-widest animate-pulse">
             Đang tải khóa học...
           </div>
-        ) : courses.length === 0 ? (
+        ) : filteredCourses.length === 0 ? (
           <div className="p-8 border border-dashed border-slate-200 rounded-2xl text-center text-slate-400 text-xs bg-white shadow-sm flex flex-col items-center justify-center gap-2">
             <BookOpen size={20} className="text-slate-300" />
             <p className="font-bold text-slate-700">Chưa có khóa học nào</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {courses.map((course) => {
+            {filteredCourses.map((course) => {
               // Dynamic level badges
               let levelBadgeClass = "bg-blue-50 text-blue-600 border border-blue-150";
               if (course.level === "Beginner") {
@@ -503,5 +516,17 @@ export default function InstructorDashboard() {
       )}
 
     </div>
+  );
+}
+
+export default function InstructorDashboard() {
+  return (
+    <Suspense fallback={
+      <div className="py-20 text-center text-xs text-slate-400 font-bold uppercase tracking-widest animate-pulse">
+        Đang tải trang quản trị...
+      </div>
+    }>
+      <InstructorDashboardContent />
+    </Suspense>
   );
 }

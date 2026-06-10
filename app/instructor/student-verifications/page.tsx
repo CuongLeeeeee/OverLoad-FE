@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usersApi } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { 
-  Shield, AlertCircle, Loader2, ArrowLeft, Check, X, ExternalLink, Image as ImageIcon, User
+  Shield, AlertCircle, Loader2, ArrowLeft, Check, X, Image as ImageIcon, User
 } from "lucide-react";
 
 interface PendingVerification {
@@ -25,7 +25,7 @@ export default function StudentVerificationsPage() {
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
-  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [zoomedItem, setZoomedItem] = useState<PendingVerification | null>(null);
 
   const fetchPending = async () => {
     setLoading(true);
@@ -158,31 +158,15 @@ export default function StudentVerificationsPage() {
                     </td>
                     <td className="p-4">
                       {item.studentCardPath ? (
-                        <div className="flex items-center gap-2">
-                          <div 
-                            onClick={() => setZoomedImage(apiUrl + item.studentCardPath)}
-                            className="w-14 h-10 rounded-lg border bg-slate-50 overflow-hidden cursor-zoom-in relative group flex items-center justify-center shrink-0"
-                          >
-                            <img 
-                              src={apiUrl + item.studentCardPath} 
-                              alt="Student Card Proof" 
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                            />
-                            <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <ImageIcon size={12} className="text-white" />
-                            </div>
-                          </div>
-                          <a 
-                            href={apiUrl + item.studentCardPath}
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-slate-400 hover:text-blue-600 flex items-center gap-0.5 font-bold"
-                          >
-                            Mở thẻ mới <ExternalLink size={10} />
-                          </a>
-                        </div>
+                        <button
+                          onClick={() => setZoomedItem(item)}
+                          className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600 rounded-lg font-bold flex items-center gap-1.5 active:scale-95 transition-all text-[10px] whitespace-nowrap"
+                        >
+                          <ImageIcon size={12} />
+                          Xem bằng chứng
+                        </button>
                       ) : (
-                        <span className="text-slate-400 italic">Không có ảnh</span>
+                        <span className="text-slate-400 italic text-[10px] whitespace-nowrap">Không có ảnh</span>
                       )}
                     </td>
                     <td className="p-4 text-slate-400 font-medium">
@@ -195,11 +179,11 @@ export default function StudentVerificationsPage() {
                       })}
                     </td>
                     <td className="p-4 text-center">
-                      <div className="flex justify-center gap-2">
+                      <div className="flex justify-center items-center gap-2 flex-nowrap">
                         <button
                           onClick={() => handleVerify(item.id, "approve")}
                           disabled={processingId !== null}
-                          className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-xl font-bold flex items-center gap-1 active:scale-95 transition-all disabled:opacity-50"
+                          className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-xl font-bold flex items-center gap-1 active:scale-95 transition-all disabled:opacity-50 whitespace-nowrap"
                         >
                           {processingId === item.id ? (
                             <Loader2 size={12} className="animate-spin text-emerald-600" />
@@ -211,14 +195,14 @@ export default function StudentVerificationsPage() {
                         <button
                           onClick={() => handleVerify(item.id, "reject")}
                           disabled={processingId !== null}
-                          className="px-3 py-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded-xl font-bold flex items-center gap-1 active:scale-95 transition-all disabled:opacity-50"
+                          className="px-3 py-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded-xl font-bold flex items-center gap-1 active:scale-95 transition-all disabled:opacity-50 whitespace-nowrap"
                         >
                           {processingId === item.id ? (
-                            <Loader2 size={12} className="animate-spin text-red-650" />
+                            <Loader2 size={12} className="animate-spin text-red-655" />
                           ) : (
                             <X size={12} className="stroke-[2.5]" />
                           )}
-                          Từ Chiếu
+                          Từ Chối
                         </button>
                       </div>
                     </td>
@@ -231,19 +215,94 @@ export default function StudentVerificationsPage() {
       )}
 
       {/* Image Zoom Modal */}
-      {zoomedImage && (
+      {zoomedItem && (
         <div 
-          onClick={() => setZoomedImage(null)}
+          onClick={() => setZoomedItem(null)}
           className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm cursor-zoom-out animate-[fadeIn_0.15s_ease-out]"
         >
-          <div className="relative max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl shadow-2xl border bg-white select-none cursor-default animate-[scaleIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
+          <div 
+            className="relative flex flex-col md:flex-row max-w-5xl w-full max-h-[85vh] overflow-hidden rounded-2xl shadow-2xl border bg-white select-none cursor-default animate-[scaleIn_0.15s_ease-out]" 
+            onClick={e => e.stopPropagation()}
+          >
             <button 
-              onClick={() => setZoomedImage(null)}
-              className="absolute top-3 right-3 p-1.5 bg-white/80 hover:bg-white border rounded-full text-slate-500 hover:text-slate-800 transition-colors shadow z-10"
+              onClick={() => setZoomedItem(null)}
+              className="absolute top-3 right-3 p-1.5 bg-white/85 hover:bg-white border rounded-full text-slate-500 hover:text-slate-800 transition-colors shadow z-10"
             >
               <X size={16} />
             </button>
-            <img src={zoomedImage} alt="Zoomed Proof" className="max-w-full max-h-[85vh] object-contain rounded-2xl" />
+            
+            {/* Image container */}
+            <div className="flex-1 bg-slate-950 flex items-center justify-center min-h-[320px] md:max-h-[85vh]">
+              <img src={apiUrl + zoomedItem.studentCardPath} alt="Zoomed Proof" className="max-w-full max-h-[50vh] md:max-h-[85vh] object-contain" />
+            </div>
+
+            {/* Sidebar User Details */}
+            <div className="w-full md:w-80 border-t md:border-t-0 md:border-l border-slate-100 p-6 flex flex-col justify-between bg-slate-50">
+              <div>
+                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-4">
+                  Thông tin học viên
+                </h3>
+                
+                <div className="flex items-center gap-3 mb-6 bg-white p-3 rounded-xl border border-slate-100">
+                  <div className="w-10 h-10 rounded-full bg-blue-50 border flex items-center justify-center text-blue-600 shrink-0 overflow-hidden">
+                    {zoomedItem.avatarUrl ? (
+                      <img src={zoomedItem.avatarUrl} alt={zoomedItem.fullName} className="w-full h-full object-cover" />
+                    ) : (
+                      <User size={18} />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-800 text-sm truncate leading-tight">{zoomedItem.fullName}</p>
+                    <p className="text-[10px] text-slate-400 font-medium truncate mt-0.5">{zoomedItem.email}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  <div className="flex justify-between py-1 border-b border-slate-200/40">
+                    <span className="text-slate-400">ID học viên</span>
+                    <span className="font-bold text-slate-700">{zoomedItem.id}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/40">
+                    <span className="text-slate-400">Thời gian gửi</span>
+                    <span className="font-bold text-slate-700">
+                      {new Date(zoomedItem.updatedAt).toLocaleString("vi-VN", {
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sidebar Action Buttons */}
+              <div className="mt-8 pt-4 border-t border-slate-200/60 flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    handleVerify(zoomedItem.id, "approve");
+                    setZoomedItem(null);
+                  }}
+                  disabled={processingId !== null}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs disabled:opacity-50 shadow-sm"
+                >
+                  <Check size={14} className="stroke-[2.5]" />
+                  Đồng ý phê duyệt
+                </button>
+                <button
+                  onClick={() => {
+                    handleVerify(zoomedItem.id, "reject");
+                    setZoomedItem(null);
+                  }}
+                  disabled={processingId !== null}
+                  className="w-full py-2.5 bg-red-50 hover:bg-red-150 border border-red-200 text-red-600 rounded-xl font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs disabled:opacity-50"
+                >
+                  <X size={14} className="stroke-[2.5]" />
+                  Từ chối xác minh
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

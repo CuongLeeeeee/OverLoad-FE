@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { useRequireRole } from "@/lib/useAuth";
+import { apiFetch } from "@/lib/apiFetch";
 import ManagerSidebar from "@/components/layout/ManagerSidebar";
 import ManagerNavbar from "@/components/layout/ManagerNavbar";
 import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2, X } from "lucide-react";
@@ -13,10 +14,6 @@ interface Course {
   isPublished: boolean;
   slug: string;
 }
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
-// ✅ token là function gọi trong handler, không phải biến module-level
-const getToken = () => localStorage.getItem("ol_access_token");
 
 function CourseModal({ course, onClose, onSave }: {
   course?: Course;
@@ -35,19 +32,18 @@ function CourseModal({ course, onClose, onSave }: {
 
   const handleSubmit = async () => {
     setLoading(true);
-    const method = course ? "PUT" : "POST";
-    const url = course
-      ? `${BASE_URL}/api/manager/courses/${course.id}`
-      : `${BASE_URL}/api/manager/courses`;
-
-    await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify(form),
-    });
-    setLoading(false);
-    onSave();
-    onClose();
+    try {
+      await apiFetch(
+        course ? `/api/manager/courses/${course.id}` : "/api/manager/courses",
+        { method: course ? "PUT" : "POST", body: JSON.stringify(form) }
+      );
+      onSave();
+      onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -57,11 +53,8 @@ function CourseModal({ course, onClose, onSave }: {
           <h3 className="font-bold text-slate-800 text-lg">
             {course ? "Sửa khóa học" : "Thêm khóa học"}
           </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X size={20} />
-          </button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
         </div>
-
         <div className="space-y-3">
           <input className="input-field" placeholder="Tên khóa học" value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })} />
@@ -88,7 +81,6 @@ function CourseModal({ course, onClose, onSave }: {
             <span className="text-sm text-slate-600">Publish ngay</span>
           </label>
         </div>
-
         <div className="flex gap-3 mt-6">
           <button onClick={onClose}
             className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50">
@@ -106,47 +98,34 @@ function CourseModal({ course, onClose, onSave }: {
 }
 
 export default function ManagerCourses() {
-  // ✅ Guard quyền
   const roleChecked = useRequireRole("Manager");
-
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<{ open: boolean; course?: Course }>({ open: false });
 
   const fetchCourses = useCallback(() => {
     setLoading(true);
-    fetch(`${BASE_URL}/api/manager/courses?pageSize=100`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    })
-      .then((r) => r.json())
-      .then((res) => setCourses(res.data ?? []))
+    apiFetch<Course[]>("/api/manager/courses?pageSize=100")
+      .then((data) => setCourses(Array.isArray(data) ? data : []))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    // ✅ Chỉ fetch khi đã xác nhận quyền
     if (roleChecked) fetchCourses();
   }, [roleChecked, fetchCourses]);
 
   const togglePublish = async (id: number) => {
-    await fetch(`${BASE_URL}/api/manager/courses/${id}/publish`, {
-      method: "PATCH",
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
+    await apiFetch(`/api/manager/courses/${id}/publish`, { method: "PATCH" }).catch(console.error);
     fetchCourses();
   };
 
   const deleteCourse = async (id: number) => {
     if (!confirm("Xóa khóa học này?")) return;
-    await fetch(`${BASE_URL}/api/manager/courses/${id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
+    await apiFetch(`/api/manager/courses/${id}`, { method: "DELETE" }).catch(console.error);
     fetchCourses();
   };
 
-  // ✅ Không render nếu chưa xác nhận quyền
   if (!roleChecked) return null;
 
   return (
@@ -157,14 +136,11 @@ export default function ManagerCourses() {
         <main className="pt-20 px-6 pb-10">
           <div className="flex justify-between items-center mb-5">
             <span className="text-sm text-slate-500">{courses.length} khóa học</span>
-            <button
-              onClick={() => setModal({ open: true })}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
-            >
+            <button onClick={() => setModal({ open: true })}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
               <Plus size={16} /> Thêm khóa học
             </button>
           </div>
-
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             {loading ? (
               <div className="flex justify-center py-16">
@@ -185,14 +161,10 @@ export default function ManagerCourses() {
                       <td className="px-5 py-4 font-medium text-slate-700">{c.title}</td>
                       <td className="px-5 py-4 text-slate-500 capitalize">{c.category}</td>
                       <td className="px-5 py-4">
-                        <span className="text-xs bg-purple-50 text-purple-600 px-2 py-1 rounded-full font-medium">
-                          {c.level}
-                        </span>
+                        <span className="text-xs bg-purple-50 text-purple-600 px-2 py-1 rounded-full font-medium">{c.level}</span>
                       </td>
                       <td className="px-5 py-4">
-                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                          c.isPublished ? "bg-green-50 text-green-600" : "bg-slate-100 text-slate-500"
-                        }`}>
+                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${c.isPublished ? "bg-green-50 text-green-600" : "bg-slate-100 text-slate-500"}`}>
                           {c.isPublished ? "Published" : "Draft"}
                         </span>
                       </td>
@@ -221,13 +193,8 @@ export default function ManagerCourses() {
           </div>
         </main>
       </div>
-
       {modal.open && (
-        <CourseModal
-          course={modal.course}
-          onClose={() => setModal({ open: false })}
-          onSave={fetchCourses}
-        />
+        <CourseModal course={modal.course} onClose={() => setModal({ open: false })} onSave={fetchCourses} />
       )}
     </div>
   );

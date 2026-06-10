@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { isLoggedIn } from "@/lib/auth";
+import { isLoggedIn, getUser } from "@/lib/auth";
 
 /* ─── tiny hook: IntersectionObserver reveal ─── */
 function useReveal() {
@@ -138,7 +138,12 @@ export default function LandingPage() {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    if (isLoggedIn()) router.replace("/home");
+    if (isLoggedIn()) {
+      const user = getUser();
+      if (user?.role === "Admin") router.replace("/admin");
+      else if (user?.role === "Manager") router.replace("/manager");
+      else router.replace("/home");
+    }
     const fn = () => setScrolled(window.scrollY > 40);
     window.addEventListener("scroll", fn);
     return () => window.removeEventListener("scroll", fn);

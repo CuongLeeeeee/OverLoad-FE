@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRequireRole } from "@/lib/useAuth";
+import { apiFetch } from "@/lib/apiFetch";
 import AdminSidebar from "@/components/layout/AdminSidebar";
 import AdminNavbar from "@/components/layout/AdminNavbar";
 import { Users, BookOpen, TrendingUp, DollarSign, Loader2 } from "lucide-react";
@@ -22,42 +23,24 @@ interface DashboardData {
   recentUsers: UserItem[];
 }
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
-
-async function safeFetch<T>(url: string, token: string | null): Promise<T | null> {
-  try {
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) return null;
-    const text = await res.text();
-    if (!text) return null;
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
-}
-
 export default function AdminDashboard() {
   const roleChecked = useRequireRole("Admin");
-
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("ol_access_token");
+    if (!roleChecked) return;
 
     Promise.allSettled([
-      safeFetch<Record<string, unknown>>(`${BASE_URL}/api/admin/users?pageSize=100`, token),
-      safeFetch<Record<string, unknown>>(`${BASE_URL}/api/courses?pageSize=1`, token),
-      safeFetch<Record<string, unknown>>(`${BASE_URL}/api/payment/stats`, token),
+      apiFetch<{ items?: UserItem[]; totalCount?: number } | UserItem[]>("/api/admin/users?pageSize=100"),
+      apiFetch<{ totalCount?: number }>("/api/courses?pageSize=1"),
+      apiFetch<{ totalRevenue?: number; coursesSold?: number }>("/api/payment/stats"),
     ]).then(([usersRes, coursesRes, statsRes]) => {
       // ── Users ──────────────────────────────────────────────
-      const usersPayload = usersRes.status === "fulfilled" ? usersRes.value : null;
-      const users: UserItem[] = (usersPayload?.["data"] as UserItem[]) ?? [];
-      const totalUsers: number =
-        ((usersPayload?.["pagination"] as Record<string, number>)?.["totalCount"]) ??
-        users.length;
+      const usersRaw = usersRes.status === "fulfilled" ? usersRes.value : null;
+      const users: UserItem[] = Array.isArray(usersRaw)
+        ? usersRaw
+        : (usersRaw as { items?: UserItem[] })?.items ?? [];
 
       const roleMap: Record<string, number> = {};
       users.forEach((u) => { roleMap[u.role] = (roleMap[u.role] ?? 0) + 1; });
@@ -67,29 +50,25 @@ export default function AdminDashboard() {
         .slice(0, 8);
 
       // ── Courses ────────────────────────────────────────────
-      const coursesPayload = coursesRes.status === "fulfilled" ? coursesRes.value : null;
-      const totalCourses: number =
-        (coursesPayload?.["totalCount"] as number) ??
-        ((coursesPayload?.["data"] as Record<string, number>)?.["totalCount"]) ??
-        0;
+      const coursesRaw = coursesRes.status === "fulfilled" ? coursesRes.value : null;
+      const totalCourses = (coursesRaw as { totalCount?: number })?.totalCount ?? 0;
 
-      // ── Payment stats ──────────────────────────────────────
-      const statsPayload = statsRes.status === "fulfilled" ? statsRes.value : null;
-      const statsData = (statsPayload?.["data"] ?? statsPayload) as Record<string, number> | null;
+      // ── Stats ──────────────────────────────────────────────
+      const stats = statsRes.status === "fulfilled" ? statsRes.value : null;
 
       setData({
-        totalUsers,
+        totalUsers: users.length,
         totalCourses,
-        totalRevenue: statsData?.["totalRevenue"] ?? 0,
-        coursesSold: statsData?.["coursesSold"] ?? 0,
+        totalRevenue: stats?.totalRevenue ?? 0,
+        coursesSold: stats?.coursesSold ?? 0,
         usersByRole: roleMap,
         recentUsers,
       });
     }).finally(() => setLoading(false));
-  }, []);
+  }, [roleChecked]);
 
   const stats = [
-    { label: "Tổng Users",  value: data?.totalUsers ?? 0,  icon: Users,       color: "bg-blue-500" },
+    { label: "Tổng Users",   value: data?.totalUsers ?? 0,   icon: Users,      color: "bg-blue-500" },
     { label: "Tổng Courses", value: data?.totalCourses ?? 0, icon: BookOpen,   color: "bg-purple-500" },
     { label: "Courses Sold", value: data?.coursesSold ?? 0,  icon: TrendingUp, color: "bg-green-500" },
     {
@@ -115,7 +94,6 @@ export default function AdminDashboard() {
             </div>
           ) : (
             <>
-              {/* Stats */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                 {stats.map((s) => (
                   <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm flex items-center gap-4">
@@ -132,8 +110,8 @@ export default function AdminDashboard() {
                 ))}
               </div>
 
-              {/* Users by Role */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Users by Role */}
                 <div className="bg-white rounded-2xl p-5 shadow-sm">
                   <h3 className="font-bold text-slate-800 mb-4">Phân bổ theo Role</h3>
                   <div className="space-y-3">
@@ -144,7 +122,7 @@ export default function AdminDashboard() {
                           <div className="w-32 h-2 bg-slate-100 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-blue-500 rounded-full"
-                              style={{ width: `${((count / (data?.totalUsers || 1)) * 100)}%` }}
+                              style={{ width: `${(count / (data?.totalUsers || 1)) * 100}%` }}
                             />
                           </div>
                           <span className="text-sm font-semibold text-slate-700 w-6 text-right">{count}</span>

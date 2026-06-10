@@ -17,12 +17,15 @@ interface ManagerDashboard {
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
 
 export default function ManagerDashboardPage() {
-  useRequireRole("Manager");
+  // ✅ Guard quyền
+  const roleChecked = useRequireRole("Manager");
 
   const [data, setData] = useState<ManagerDashboard | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // ✅ Chỉ fetch khi đã xác nhận quyền
+    if (!roleChecked) return;
     const token = localStorage.getItem("ol_access_token");
     fetch(`${BASE_URL}/api/manager/dashboard`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -31,7 +34,7 @@ export default function ManagerDashboardPage() {
       .then((res) => setData(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [roleChecked]); // ✅ deps đúng
 
   const stats = [
     { label: "Tổng khóa học", value: data?.totalCourses ?? 0, icon: BookOpen, color: "bg-blue-500" },
@@ -39,6 +42,9 @@ export default function ManagerDashboardPage() {
     { label: "Enrollments", value: data?.totalEnrollments ?? 0, icon: Users2, color: "bg-green-500" },
     { label: "Đã published", value: data?.publishedCourses ?? 0, icon: Eye, color: "bg-orange-500" },
   ];
+
+  // ✅ Không render nếu chưa xác nhận quyền
+  if (!roleChecked) return null;
 
   return (
     <div className="flex min-h-screen bg-[#eef2fb]">

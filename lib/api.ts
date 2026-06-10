@@ -22,10 +22,60 @@ export function removeToken() {
   localStorage.removeItem("ol_access_token");
 }
 
-// ─── Core fetch ──────────────────────────────────────────────────────────────
+// ─── Refresh token helper ────────────────────────────────────────────────────
+let isRefreshing = false;
+let refreshPromise: Promise<string | null> | null = null;
+
+async function tryRefreshToken(): Promise<string | null> {
+  // Nếu đang refresh thì chờ cái đang chạy, tránh gọi nhiều lần
+  if (isRefreshing && refreshPromise) return refreshPromise;
+
+  const refreshToken = localStorage.getItem("ol_refresh_token");
+  if (!refreshToken) return null;
+
+  isRefreshing = true;
+  refreshPromise = fetch(`${BASE_URL}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken }),
+  })
+    .then((r) => {
+      if (!r.ok) throw new Error("Refresh failed");
+      return r.json();
+    })
+    .then((json) => {
+      const data = json.data ?? json;
+      const newToken = data.accessToken;
+      if (!newToken) throw new Error("No token in refresh response");
+
+      // Lưu lại tokens và user mới
+      localStorage.setItem("ol_access_token", newToken);
+      if (data.refreshToken) localStorage.setItem("ol_refresh_token", data.refreshToken);
+      if (data.user) localStorage.setItem("ol_user", JSON.stringify(data.user));
+
+      return newToken as string;
+    })
+    .catch(() => {
+      // Refresh thất bại → xóa hết, redirect login
+      localStorage.removeItem("ol_access_token");
+      localStorage.removeItem("ol_refresh_token");
+      localStorage.removeItem("ol_user");
+      window.location.replace("/login");
+      return null;
+    })
+    .finally(() => {
+      isRefreshing = false;
+      refreshPromise = null;
+    });
+
+  return refreshPromise;
+}
+
+// ─── Core fetch (có auto-retry sau refresh) ──────────────────────────────────
 async function request<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  retry = true   // thử refresh 1 lần nếu 401
 ): Promise<T> {
   const token = getToken();
   const headers: HeadersInit = {
@@ -44,6 +94,17 @@ async function request<T>(
     throw new Error(`Cannot reach API ${url}: ${message}`);
   }
 
+  // ✅ Nếu 401 và còn lần retry → thử refresh token rồi gọi lại
+  if (res.status === 401 && retry) {
+    const newToken = await tryRefreshToken();
+    if (newToken) {
+      // Gọi lại request với token mới, retry = false để tránh vòng lặp
+      return request<T>(path, options, false);
+    }
+    // tryRefreshToken đã redirect rồi, throw để dừng
+    throw new Error("Unauthorized");
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.detail ?? err?.message ?? `HTTP ${res.status}`);
@@ -53,12 +114,9 @@ async function request<T>(
   if (res.status === 204) return undefined as T;
 
   const json = await res.json();
-  // BE returns { success, data, pagination?, message?, errors? }
-  // If has data + pagination, wrap into { items, ...pagination }
   if ("data" in json && Array.isArray(json.data) && "pagination" in json) {
     return { items: json.data, ...json.pagination } as T;
   }
-  // If has data without pagination, unwrap
   if ("data" in json) {
     return json.data as T;
   }

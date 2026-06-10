@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRequireRole } from "@/lib/useAuth";
 import ManagerSidebar from "@/components/layout/ManagerSidebar";
 import ManagerNavbar from "@/components/layout/ManagerNavbar";
@@ -15,7 +15,8 @@ interface Course {
 }
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
-const token = () => localStorage.getItem("ol_access_token");
+// ✅ token là function gọi trong handler, không phải biến module-level
+const getToken = () => localStorage.getItem("ol_access_token");
 
 function CourseModal({ course, onClose, onSave }: {
   course?: Course;
@@ -41,7 +42,7 @@ function CourseModal({ course, onClose, onSave }: {
 
     await fetch(url, {
       method,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
       body: JSON.stringify(form),
     });
     setLoading(false);
@@ -105,29 +106,33 @@ function CourseModal({ course, onClose, onSave }: {
 }
 
 export default function ManagerCourses() {
-  useRequireRole("Manager");
+  // ✅ Guard quyền
+  const roleChecked = useRequireRole("Manager");
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<{ open: boolean; course?: Course }>({ open: false });
 
-  const fetchCourses = () => {
+  const fetchCourses = useCallback(() => {
     setLoading(true);
     fetch(`${BASE_URL}/api/manager/courses?pageSize=100`, {
-      headers: { Authorization: `Bearer ${token()}` },
+      headers: { Authorization: `Bearer ${getToken()}` },
     })
       .then((r) => r.json())
       .then((res) => setCourses(res.data ?? []))
       .catch(console.error)
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(() => { fetchCourses(); }, []);
+  useEffect(() => {
+    // ✅ Chỉ fetch khi đã xác nhận quyền
+    if (roleChecked) fetchCourses();
+  }, [roleChecked, fetchCourses]);
 
   const togglePublish = async (id: number) => {
     await fetch(`${BASE_URL}/api/manager/courses/${id}/publish`, {
       method: "PATCH",
-      headers: { Authorization: `Bearer ${token()}` },
+      headers: { Authorization: `Bearer ${getToken()}` },
     });
     fetchCourses();
   };
@@ -136,10 +141,13 @@ export default function ManagerCourses() {
     if (!confirm("Xóa khóa học này?")) return;
     await fetch(`${BASE_URL}/api/manager/courses/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token()}` },
+      headers: { Authorization: `Bearer ${getToken()}` },
     });
     fetchCourses();
   };
+
+  // ✅ Không render nếu chưa xác nhận quyền
+  if (!roleChecked) return null;
 
   return (
     <div className="flex min-h-screen bg-[#eef2fb]">

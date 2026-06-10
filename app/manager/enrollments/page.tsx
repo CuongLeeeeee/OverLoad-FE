@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRequireRole } from "@/lib/useAuth";
 import ManagerSidebar from "@/components/layout/ManagerSidebar";
 import ManagerNavbar from "@/components/layout/ManagerNavbar";
@@ -16,35 +16,42 @@ interface Enrollment {
 }
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
-const token = () => localStorage.getItem("ol_access_token");
+const getToken = () => localStorage.getItem("ol_access_token");
 
 export default function ManagerEnrollments() {
-  useRequireRole("Manager");
+  // ✅ Guard quyền
+  const roleChecked = useRequireRole("Manager");
 
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchEnrollments = () => {
+  const fetchEnrollments = useCallback(() => {
     setLoading(true);
     fetch(`${BASE_URL}/api/manager/enrollments`, {
-      headers: { Authorization: `Bearer ${token()}` },
+      headers: { Authorization: `Bearer ${getToken()}` },
     })
       .then((r) => r.json())
       .then((res) => setEnrollments(res.data?.items ?? res.data ?? []))
       .catch(console.error)
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(() => { fetchEnrollments(); }, []);
+  useEffect(() => {
+    // ✅ Chỉ fetch khi đã xác nhận quyền
+    if (roleChecked) fetchEnrollments();
+  }, [roleChecked, fetchEnrollments]);
 
   const deleteEnrollment = async (id: number) => {
     if (!confirm("Xóa enrollment này?")) return;
     await fetch(`${BASE_URL}/api/manager/enrollments/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token()}` },
+      headers: { Authorization: `Bearer ${getToken()}` },
     });
     fetchEnrollments();
   };
+
+  // ✅ Không render nếu chưa xác nhận quyền
+  if (!roleChecked) return null;
 
   return (
     <div className="flex min-h-screen bg-[#eef2fb]">

@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { usersApi } from "@/lib/api";
+// TODO(api-v1): chưa có API xác minh sinh viên (xem/duyệt) — trang này sẽ lỗi 404 với BE v1.
+import { usersApi, API_ORIGIN } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 import { 
   Shield, AlertCircle, Loader2, ArrowLeft, Check, X, Image as ImageIcon, User
@@ -43,7 +44,8 @@ export default function StudentVerificationsPage() {
   useEffect(() => {
     setMounted(true);
     const user = getUser();
-    if (!user || (user.role !== "Admin" && user.role !== "Instructor")) {
+    // Duyệt sinh viên chỉ dành cho Admin (BE yêu cầu role Admin)
+    if (!user || user.role !== "Admin") {
       router.push("/");
       return;
     }
@@ -78,7 +80,7 @@ export default function StudentVerificationsPage() {
     );
   }
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
+  const apiUrl = API_ORIGIN;
 
   return (
     <div className="p-8 max-w-5xl mx-auto text-slate-800 animate-[fadeIn_0.3s_ease-out]">
@@ -110,7 +112,7 @@ export default function StudentVerificationsPage() {
         </div>
       )}
       {successMsg && (
-        <div className="flex items-start gap-2.5 p-4 bg-emerald-50/70 border border-emerald-200 text-emerald-600 rounded-xl mb-6 text-xs font-semibold">
+        <div className="flex items-start gap-2.5 p-4 bg-emerald-50/70 border border-emerald-200 text-emerald-600 rounded-xl fixed top-4 right-4 z-[60] shadow-lg max-w-sm text-xs font-semibold">
           <Check size={16} className="shrink-0 mt-0.5 text-emerald-500" />
           <span>{successMsg}</span>
         </div>

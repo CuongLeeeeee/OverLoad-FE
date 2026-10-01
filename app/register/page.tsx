@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, ArrowLeft, X, Loader2 } from "lucide-react";
 import { authApi } from "@/lib/api";
-import { setToken, setRefreshToken, saveUser } from "@/lib/auth";
+import { storeAuthResult } from "@/lib/auth";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -29,9 +29,7 @@ export default function RegisterPage() {
         password: form.password,
         fullName: form.fullName,
       });
-      setToken(res.accessToken);
-      setRefreshToken(res.refreshToken);
-      saveUser(res.user);
+      storeAuthResult(res);
       router.push("/");
       router.push("/login");
     } catch (err: unknown) {

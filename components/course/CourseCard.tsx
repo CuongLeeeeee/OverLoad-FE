@@ -1,18 +1,19 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Course, getCourseColor, LEVEL_MAP } from "@/lib/types";
-import { enrollmentsApi } from "@/lib/api";
+import { Course, getCourseColor, LEVEL_LABEL, formatCoursePrice } from "@/lib/types";
+import { meApi } from "@/lib/api";
 import { getUser } from "@/lib/auth";
-import CoursePopup from "./CoursePopup";
+import CoursePopup, { PopupCourse } from "./CoursePopup";
 
-export default function CourseCard({ course }: { course: Course }) {
+export type CardCourse = PopupCourse & Pick<Course, "level">;
+
+export default function CourseCard({ course }: { course: CardCourse }) {
   const router = useRouter();
   const [showPopup, setShowPopup] = useState(false);
   const [checking, setChecking] = useState(false);
   const color = getCourseColor(course);
-  const levelInfo = LEVEL_MAP[course.level] ?? { label: course.level, badge: "free" };
-  const isFree = levelInfo.badge === "free";
+  const isFree = course.price <= 0;
 
   const handleClick = async () => {
     const user = getUser();
@@ -23,8 +24,8 @@ export default function CourseCard({ course }: { course: Course }) {
 
     setChecking(true);
     try {
-      const enrollments = await enrollmentsApi.getByUser(user.id);
-      const alreadyEnrolled = enrollments.some((e) => e.courseId === course.id);
+      const myCourses = await meApi.getCourses();
+      const alreadyEnrolled = myCourses.some((c) => c.courseId === course.id);
       if (alreadyEnrolled) {
         router.push(`/course/${course.id}`);
       } else {
@@ -67,14 +68,9 @@ export default function CourseCard({ course }: { course: Course }) {
               <button className="w-full text-center py-1.5 rounded-xl border border-orange-200 text-orange-500 text-sm font-semibold hover:bg-orange-50 transition-colors">
                 Xem lộ trình
               </button>
-              <div className="flex gap-1 mt-2 justify-center">
-                {levelInfo.badge === "plus" && <span className="badge-plus">Plus</span>}
-                {levelInfo.badge === "pro" && (
-                  <>
-                    <span className="badge-plus">Plus</span>
-                    <span className="badge-pro">Pro</span>
-                  </>
-                )}
+              <div className="flex gap-1 mt-2 justify-center items-center">
+                <span className="badge-pro">{formatCoursePrice(course.price)}</span>
+                <span className="text-[10px] text-slate-400">· {LEVEL_LABEL[course.level] ?? course.level}</span>
               </div>
             </>
           )}

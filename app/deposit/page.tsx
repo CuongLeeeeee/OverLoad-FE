@@ -1,15 +1,30 @@
 "use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
 import Navbar from "@/components/layout/Navbar";
-import { paymentApi } from "@/lib/api";
+import { meApi, startCheckout } from "@/lib/api";
+import { Transaction, describeTransaction, TRANSACTION_STATUS_LABEL } from "@/lib/types";
 import { Wallet, DollarSign, ArrowRight, Loader2, Sparkles, AlertCircle } from "lucide-react";
 import { getUser } from "@/lib/auth";
-import PaymentResultModal from "@/components/payment/PaymentResultModal";
+import PaymentResultModal, { readPaymentResultParam, PaymentResultStatus } from "@/components/payment/PaymentResultModal";
 
 export default function DepositPage() {
+  // useSearchParams cần Suspense khi prerender
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#eef2fb] flex items-center justify-center">
+        <Loader2 size={32} className="animate-spin text-blue-600" />
+      </div>
+    }>
+      <DepositPageContent />
+    </Suspense>
+  );
+}
+
+function DepositPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [balance, setBalance] = useState<number | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(true);
   
@@ -19,16 +34,16 @@ export default function DepositPage() {
   const [errorMsg, setErrorMsg] = useState("");
   const [mounted, setMounted] = useState(false);
 
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [paymentResult, setPaymentResult] = useState<"success" | "cancel" | null>(null);
+  const [paymentResult, setPaymentResult] = useState<PaymentResultStatus | null>(null);
 
   const quickAmounts = [10000, 20000, 50000, 100000, 200000, 500000];
 
   const fetchBalance = async () => {
     setLoadingBalance(true);
     try {
-      const res = await paymentApi.getBalance();
+      const res = await meApi.getWallet();
       setBalance(res.balance);
     } catch (err) {
       console.error("Lỗi khi tải số dư:", err);
@@ -40,8 +55,8 @@ export default function DepositPage() {
   const fetchHistory = async () => {
     setLoadingHistory(true);
     try {
-      const data = await paymentApi.getTransactions();
-      setTransactions(data || []);
+      const page = await meApi.getTransactions({ pageSize: 20, sortBy: "-createdAt" });
+      setTransactions(page.items ?? []);
     } catch (err) {
       console.error("Lỗi khi tải lịch sử nạp tiền:", err);
     } finally {
@@ -60,29 +75,23 @@ export default function DepositPage() {
     fetchHistory();
 
     if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      
-      const amountParam = params.get("amount");
-      if (amountParam) {
-        const amt = Number(amountParam);
-        if (!isNaN(amt) && amt >= 10000) {
-          setAmount(amt);
-          if (quickAmounts.includes(amt)) {
-            setCustomAmount("");
-          } else {
-            setCustomAmount(amt.toString());
-          }
-        }
-      }
-
-      const payStatus = params.get("payment");
-      if (payStatus === "success" || payStatus === "cancel") {
-        setPaymentResult(payStatus);
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, "", newUrl);
-      }
+      // Chỉ set khi có kết quả: StrictMode (dev) chạy effect 2 lần, lần 2 URL đã bị xóa query
+      const payResult = readPaymentResultParam();
+      if (payResult) setPaymentResult(payResult);
     }
   }, [router]);
+
+  // Đọc lại ?amount= mỗi khi URL đổi (vd mở PricingModal ngay trên trang này rồi chọn gói khác)
+  const amountParam = searchParams.get("amount");
+  useEffect(() => {
+    if (!amountParam) return;
+    const amt = Number(amountParam);
+    if (!isNaN(amt) && amt >= 10000) {
+      setAmount(amt);
+      setCustomAmount(quickAmounts.includes(amt) ? "" : amt.toString());
+      setErrorMsg("");
+    }
+  }, [amountParam]);
 
   if (!mounted) {
     return (
@@ -117,17 +126,7 @@ export default function DepositPage() {
     setErrorMsg("");
 
     try {
-      const res = await paymentApi.createDepositLink({
-        amount: amount,
-        returnUrl: `${window.location.origin}/payment/success?from=${encodeURIComponent("/deposit")}`,
-        cancelUrl: `${window.location.origin}/payment/cancel?from=${encodeURIComponent("/deposit")}`,
-      });
-
-      if (res && res.checkoutUrl) {
-        window.location.href = res.checkoutUrl;
-      } else {
-        throw new Error("Không nhận được liên kết thanh toán từ cổng PayOS.");
-      }
+      await startCheckout({ type: "Deposit", amount: Math.round(amount) }, "/deposit");
     } catch (err: any) {
       setErrorMsg(err?.message || "Có lỗi xảy ra khi khởi tạo giao dịch. Vui lòng thử lại.");
       setLoadingCheckout(false);
@@ -320,12 +319,25 @@ export default function DepositPage() {
                     {transactions.map((tx) => (
                       <tr key={tx.transactionId} className="hover:bg-slate-50/50 transition-colors">
                         <td className="p-3 font-mono text-[10px] text-slate-400 font-bold">{tx.orderCode}</td>
-                        <td className="p-3 font-semibold text-slate-700">{tx.courseTitle ?? "Nạp tiền tài khoản"}</td>
-                        <td className={`p-3 font-bold ${tx.amount > 0 ? "text-emerald-600" : "text-rose-500"}`}>
-                          {tx.amount > 0 ? `+${tx.amount.toLocaleString("vi-VN")}đ` : `${tx.amount.toLocaleString("vi-VN")}đ`}
+                        <td className="p-3 font-semibold text-slate-700">
+                          {describeTransaction(tx)}
+                          <span className="ml-1 text-[9px] font-medium text-slate-400">({tx.method === "Wallet" ? "Ví" : "PayOS"})</span>
                         </td>
+                        {/* amount luôn dương: nạp tiền = cộng ví, thanh toán bằng ví = trừ ví; chỉ tính khi Success */}
+                        {(() => {
+                          const settled = tx.status === "Success";
+                          const sign = !settled ? "" : tx.type === "Deposit" ? "+" : tx.method === "Wallet" ? "-" : "";
+                          const color = !settled
+                            ? `text-slate-400 font-medium ${tx.status === "Cancelled" ? "line-through" : ""}`
+                            : tx.type === "Deposit" ? "text-emerald-600" : tx.method === "Wallet" ? "text-rose-500" : "text-slate-700";
+                          return (
+                            <td className={`p-3 font-bold ${color}`}>
+                              {sign}{tx.amount.toLocaleString("vi-VN")}đ
+                            </td>
+                          );
+                        })()}
                         <td className="p-3 text-slate-400">
-                          {new Date(tx.paymentTime).toLocaleString("vi-VN", {
+                          {new Date(tx.paidAt ?? tx.createdAt).toLocaleString("vi-VN", {
                             year: "numeric",
                             month: "2-digit",
                             day: "2-digit",
@@ -335,13 +347,13 @@ export default function DepositPage() {
                         </td>
                         <td className="p-3 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${
-                            tx.status === "SUCCESS"
+                            tx.status === "Success"
                               ? "bg-emerald-50 text-emerald-600 border-emerald-250"
-                              : tx.status === "PENDING"
+                              : tx.status === "Pending"
                               ? "bg-amber-50 text-amber-600 border-amber-250"
                               : "bg-slate-50 text-slate-500 border-slate-200"
                           }`}>
-                            {tx.status}
+                            {TRANSACTION_STATUS_LABEL[tx.status] ?? tx.status}
                           </span>
                         </td>
                       </tr>

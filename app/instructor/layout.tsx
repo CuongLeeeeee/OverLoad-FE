@@ -2,10 +2,11 @@
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
-import { getUser, clearAuth } from "@/lib/auth";
+import { getUser } from "@/lib/auth";
+import { logout } from "@/lib/api";
 import { User as UserType } from "@/lib/types";
 import { 
-  Layout, Server, Database, LogOut, User, Layers, ArrowLeft, ShieldAlert
+  Layout, Server, Database, LogOut, User, Layers, ArrowLeft, ShieldAlert, ClipboardCheck, GraduationCap
 } from "lucide-react";
 
 function InstructorToolbar() {
@@ -17,8 +18,10 @@ function InstructorToolbar() {
   useEffect(() => {
     const u = getUser();
     setUser(u);
-    // Redirect if not instructor/admin (extra safety guard)
-    if (u && u.role !== "Admin" && u.role !== "Instructor") {
+    // Màn hình quản trị chỉ cho Admin/Instructor (API cũng trả 403 nếu sai quyền)
+    if (!u) {
+      router.push("/login");
+    } else if (u.role !== "Admin" && u.role !== "Instructor") {
       router.push("/");
     }
   }, [router]);
@@ -34,8 +37,8 @@ function InstructorToolbar() {
     }
   };
 
-  const handleLogout = () => {
-    clearAuth();
+  const handleLogout = async () => {
+    await logout();
     router.push("/login");
   };
 
@@ -60,7 +63,7 @@ function InstructorToolbar() {
               OverLoad Studio
             </h2>
             <span className="px-2.5 py-0.5 bg-blue-50 border border-blue-100 text-blue-600 rounded-full text-[9px] font-bold uppercase tracking-wider shrink-0">
-              Instructor
+              {user?.role === "Admin" ? "Admin" : "Instructor"}
             </span>
           </div>
           <p className="text-[10px] text-slate-400 mt-0.5">
@@ -117,6 +120,35 @@ function InstructorToolbar() {
             })}
           </div>
         </div>
+
+        {/* Quản trị — chỉ Admin (duyệt khóa học, duyệt sinh viên) */}
+        {user?.role === "Admin" && (
+          <div className="flex flex-col gap-4">
+            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+              <ShieldAlert size={11} /> Quản trị
+            </h3>
+            <div className="flex flex-col gap-1.5">
+              {[
+                { href: "/instructor/course-reviews", label: "Duyệt khóa học", icon: ClipboardCheck },
+                { href: "/instructor/student-verifications", label: "Duyệt sinh viên", icon: GraduationCap },
+              ].map(({ href, label, icon: IconComp }) => {
+                const isActive = pathname === href;
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={`w-full px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-3 transition-all duration-150 ${
+                      isActive ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                    }`}
+                  >
+                    <IconComp size={14} className={isActive ? "text-slate-900" : "text-slate-400"} />
+                    {label}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom Profile and Sign out */}

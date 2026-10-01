@@ -1,5 +1,5 @@
 "use client";
-import { Search, Zap, AlertCircle } from "lucide-react";
+import { Search, Zap, AlertCircle, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getUser, saveUser } from "@/lib/auth";
@@ -20,6 +20,7 @@ export default function Navbar() {
     }
   }, []);
 
+  // TODO(api-v1): chưa có API (hasSeenStudentRejection / xác minh sinh viên)
   const handleDismissRejection = async () => {
     try {
       await usersApi.dismissRejection();
@@ -52,13 +53,33 @@ export default function Navbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-3">
-        <button
-          onClick={() => setIsPricingOpen(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-sm font-600 hover:bg-orange-600 transition-colors"
-        >
-          <Zap size={14} fill="white" />
-          Nâng cấp
-        </button>
+        {(user?.role === "Admin" || user?.role === "Instructor") && (
+          <Link
+            href="/instructor/dashboard"
+            className="flex items-center gap-1.5 px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-sm font-600 hover:bg-slate-50 transition-colors"
+          >
+            <LayoutDashboard size={14} />
+            Quản trị
+          </Link>
+        )}
+        {user?.isPro ? (
+          // Đã PRO: chỉ còn nhu cầu gia hạn
+          <button
+            onClick={() => setIsPricingOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 border border-purple-200 text-purple-600 rounded-xl text-sm font-600 hover:bg-purple-50 transition-colors"
+          >
+            <Zap size={14} />
+            Gia hạn PRO
+          </button>
+        ) : (
+          <button
+            onClick={() => setIsPricingOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-accent text-white rounded-xl text-sm font-600 hover:bg-orange-600 transition-colors"
+          >
+            <Zap size={14} fill="white" />
+            Nâng cấp
+          </button>
+        )}
 
         <div className="flex items-center gap-2">
           <div className="text-right">
@@ -66,8 +87,14 @@ export default function Navbar() {
               {user?.fullName ?? "Khách"}
             </div>
             <div className="flex gap-1 justify-end mt-0.5">
-              <span className="text-xs bg-slate-100 text-slate-500 px-1.5 rounded font-500">Free</span>
-              <span className="text-xs bg-blue-50 text-primary px-1.5 rounded font-500">Học viên</span>
+              {user?.isPro ? (
+                <span className="text-xs bg-purple-50 text-purple-600 px-1.5 rounded font-500">PRO</span>
+              ) : (
+                <span className="text-xs bg-slate-100 text-slate-500 px-1.5 rounded font-500">Free</span>
+              )}
+              <span className="text-xs bg-blue-50 text-primary px-1.5 rounded font-500">
+                {user?.role === "Admin" ? "Quản trị viên" : user?.role === "Instructor" ? "Giảng viên" : "Học viên"}
+              </span>
             </div>
           </div>
           <Link href="/profile">

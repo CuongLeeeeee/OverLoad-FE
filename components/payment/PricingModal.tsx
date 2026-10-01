@@ -2,8 +2,11 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Check, X, Zap, Loader2, Sparkles, Trophy, Star, Wallet, AlertCircle, Clock, ShieldCheck } from "lucide-react";
-import { paymentApi, enrollmentsApi } from "@/lib/api";
+import { meApi, startCheckout, refreshCurrentUser } from "@/lib/api";
 import { getUser } from "@/lib/auth";
+import { ProPackage } from "@/lib/types";
+
+const PRO_PACKAGE: Record<"month" | "year", ProPackage> = { month: "Month", year: "Year" };
 
 interface PricingModalProps {
   onClose: () => void;
@@ -19,6 +22,7 @@ export default function PricingModal({ onClose }: PricingModalProps) {
   const [proExpiration, setProExpiration] = useState<Date | null>(null);
 
   const user = getUser();
+  // TODO(api-v1): chưa có API xác minh sinh viên → luôn false; giá thực tế do BE quyết định khi checkout
   const isStudentApproved = user?.studentVerificationStatus === "APPROVED";
   const monthlyPrice = isStudentApproved ? 48300 : 69000;
   const yearlyPrice = isStudentApproved ? 419300 : 599000;
@@ -28,35 +32,12 @@ export default function PricingModal({ onClose }: PricingModalProps) {
     document.body.style.overflow = "hidden";
 
     if (user) {
-      paymentApi.getBalance()
-        .then(res => setBalance(res.balance))
-        .catch(err => console.error(err));
-
-      enrollmentsApi.getByUserDetails(user.id)
-        .then(res => {
-          const proEnrollments = res
-            .filter(e => e.courseSlug === "pro-upgrade-month" || e.courseSlug === "pro-upgrade-year")
-            .map(e => ({
-              enrolledAt: new Date(e.enrolledAt),
-              durationDays: e.courseSlug === "pro-upgrade-month" ? 30 : 365
-            }))
-            .sort((a, b) => a.enrolledAt.getTime() - b.enrolledAt.getTime());
-
-          if (proEnrollments.length > 0) {
-            let expiration: Date | null = null;
-            for (const item of proEnrollments) {
-              if (expiration === null || expiration < item.enrolledAt) {
-                expiration = new Date(item.enrolledAt.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-              } else {
-                expiration = new Date(expiration.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-              }
-            }
-            if (expiration && expiration > new Date()) {
-              setProExpiration(expiration);
-            }
-          }
+      meApi.getWallet()
+        .then(wallet => {
+          setBalance(wallet.balance);
+          setProExpiration(wallet.isPro && wallet.proExpiresAt ? new Date(wallet.proExpiresAt) : null);
         })
-        .catch(err => console.error("Lỗi lấy thông tin gói PRO:", err));
+        .catch(err => console.error("Lỗi lấy thông tin ví / PRO:", err));
     }
 
     return () => {
@@ -90,18 +71,7 @@ export default function PricingModal({ onClose }: PricingModalProps) {
     setError("");
 
     try {
-      const fromPath = typeof window !== "undefined" ? window.location.pathname : "/";
-      const res = await paymentApi.createProLink({
-        packageType,
-        returnUrl: `${window.location.origin}/payment/success?from=${encodeURIComponent(fromPath)}`,
-        cancelUrl: `${window.location.origin}/payment/cancel?from=${encodeURIComponent(fromPath)}`,
-      });
-
-      if (res && res.checkoutUrl) {
-        window.location.href = res.checkoutUrl;
-      } else {
-        throw new Error("Không thể tạo liên kết thanh toán PRO.");
-      }
+      await startCheckout({ type: "Pro", package: PRO_PACKAGE[packageType] }, window.location.pathname);
     } catch (err: any) {
       setError(err?.message || "Có lỗi xảy ra khi kết nối tới cổng thanh toán. Vui lòng thử lại.");
       setLoading(null);
@@ -118,7 +88,9 @@ export default function PricingModal({ onClose }: PricingModalProps) {
     setError("");
 
     try {
-      await paymentApi.buyProWithBalance({ packageType });
+      // Không đủ tiền → 400
+      await meApi.purchasePro(PRO_PACKAGE[packageType]);
+      await refreshCurrentUser().catch(() => {});
       onClose();
       router.replace(window.location.pathname + "?payment=success");
     } catch (err: any) {
@@ -436,7 +408,7 @@ export default function PricingModal({ onClose }: PricingModalProps) {
             </div>
             <h3 className="text-base font-extrabold text-slate-900 mb-2">Số dư không đủ</h3>
             <p className="text-slate-500 text-xs leading-relaxed mb-6">
-              Bạn không đủ tiền để mua khóa học, có tiếp tục nạp tiền không?
+              Số dư ví không đủ để nâng cấp PRO. Bạn có muốn nạp thêm tiền không?
             </p>
             <div className="flex gap-3">
               <button

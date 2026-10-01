@@ -1,13 +1,15 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, BookOpen, Loader2 } from "lucide-react";
-import { Course, getCourseColor, LEVEL_MAP } from "@/lib/types";
-import { enrollmentsApi, paymentApi } from "@/lib/api";
+import { X, BookOpen, Loader2, ShoppingCart, Zap } from "lucide-react";
+import { Course, getCourseColor, LEVEL_LABEL, formatCoursePrice } from "@/lib/types";
+import { coursesApi, startCheckout, isApiError } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 
+export type PopupCourse = Pick<Course, "id" | "title" | "category" | "level" | "description" | "price">;
+
 interface Props {
-  course: Course;
+  course: PopupCourse;
   onClose: () => void;
 }
 
@@ -15,13 +17,13 @@ export default function CoursePopup({ course, onClose }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // Khóa trả phí mà user chưa có PRO → phải mua qua thanh toán (BE cũng trả 400 nếu gọi enroll)
+  const [needsPurchase, setNeedsPurchase] = useState(() => course.price > 0 && !getUser()?.isPro);
 
   const gradient = getCourseColor(course);
-  const levelInfo = LEVEL_MAP[course.level] ?? { label: course.level, badge: "free" };
 
   const handleEnroll = async () => {
-    const user = getUser();
-    if (!user) {
+    if (!getUser()) {
       router.push("/login");
       return;
     }
@@ -29,36 +31,32 @@ export default function CoursePopup({ course, onClose }: Props) {
     setLoading(true);
     setError("");
     try {
-      if (course.price > 0) {
-        const fromPath = typeof window !== "undefined" ? window.location.pathname : "/";
-        const res = await paymentApi.createLink({
-          courseId: course.id,
-          returnUrl: `${window.location.origin}/payment/success?from=${encodeURIComponent(fromPath)}`,
-          cancelUrl: `${window.location.origin}/payment/cancel?from=${encodeURIComponent(fromPath)}`,
-        });
-        if (res && res.checkoutUrl) {
-          window.location.href = res.checkoutUrl;
-        } else {
-          throw new Error("Không thể tạo liên kết thanh toán.");
-        }
-      } else {
-        await enrollmentsApi.enroll(user.id, course.id);
-        router.push(`/course/${course.id}`);
-      }
+      await coursesApi.enroll(course.id);
+      router.push(`/course/${course.id}`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "";
-      if (
-        msg.includes("400") ||
-        msg.includes("409") ||
-        msg.toLowerCase().includes("already") ||
-        msg.includes("đăng ký") ||
-        msg.includes("đã mua")
-      ) {
+      if (isApiError(err, 409)) {
+        // Đã ghi danh
         router.push(`/course/${course.id}`);
-      } else {
-        setError(msg || "Có lỗi xảy ra, vui lòng thử lại.");
-        setLoading(false);
+        return;
       }
+      if (isApiError(err, 400)) {
+        setNeedsPurchase(true);
+        setError(err.serverMessage);
+      } else {
+        setError(err instanceof Error ? err.message : "Có lỗi xảy ra, vui lòng thử lại.");
+      }
+      setLoading(false);
+    }
+  };
+
+  const handleBuy = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await startCheckout({ type: "Course", courseId: course.id }, window.location.pathname);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Không thể tạo liên kết thanh toán.");
+      setLoading(false);
     }
   };
 
@@ -89,10 +87,8 @@ export default function CoursePopup({ course, onClose }: Props) {
         <div className="p-6">
           <h2 className="text-lg font-bold text-slate-800 mb-1">{course.title}</h2>
           <div className="flex justify-between items-center mb-3">
-            <span className={`badge-${levelInfo.badge} inline-block`}>{levelInfo.label}</span>
-            <span className="text-sm font-bold text-blue-600">
-              {course.price > 0 ? `${course.price.toLocaleString("vi-VN")} VND` : "Miễn phí"}
-            </span>
+            <span className="text-xs font-semibold text-slate-500">{LEVEL_LABEL[course.level] ?? course.level}</span>
+            <span className="text-sm font-bold text-blue-600">{formatCoursePrice(course.price)}</span>
           </div>
 
           <p className="text-sm text-slate-500 mb-4 leading-relaxed line-clamp-3">
@@ -106,22 +102,42 @@ export default function CoursePopup({ course, onClose }: Props) {
 
           {error && <p className="text-xs text-red-500 mb-3">{error}</p>}
 
-          <div className="flex gap-3">
-            <button
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors"
-            >
-              Đóng
-            </button>
-            <button
-              onClick={handleEnroll}
-              disabled={loading}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
-            >
-              {loading && <Loader2 size={14} className="animate-spin" />}
-              {course.price > 0 ? "Mua khóa học" : "Vào học ngay"}
-            </button>
-          </div>
+          {needsPurchase ? (
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleBuy}
+                disabled={loading}
+                className="w-full py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <ShoppingCart size={14} />}
+                Mua khóa học
+              </button>
+              <button
+                onClick={() => router.push("/pricing")}
+                disabled={loading}
+                className="w-full py-2.5 rounded-xl border border-orange-200 text-orange-600 text-sm font-semibold hover:bg-orange-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Zap size={14} /> Nâng cấp PRO để học mọi khóa
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={handleEnroll}
+                disabled={loading}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {loading && <Loader2 size={14} className="animate-spin" />}
+                Vào học ngay
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

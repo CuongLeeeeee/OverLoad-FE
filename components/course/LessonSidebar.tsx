@@ -1,16 +1,18 @@
 "use client";
-import { Course, Lesson } from "@/lib/types";
-import { X, CheckCircle2, Circle, Clock } from "lucide-react";
+import { Course, CourseLessonItem } from "@/lib/types";
+import { X, CheckCircle2, Clock, Lock } from "lucide-react";
 
 interface Props {
   course: Course;
-  lessons: Lesson[];
+  lessons: CourseLessonItem[];
   activeLessonId: number | null;
   onLessonSelect: (lessonId: number) => void;
   onClose: () => void;
+  /** Đã ghi danh hoặc có PRO: bài bị khóa lúc này chỉ do chưa hoàn thành bài trước */
+  hasPaidAccess: boolean;
 }
 
-export default function LessonSidebar({ course, lessons, activeLessonId, onLessonSelect, onClose }: Props) {
+export default function LessonSidebar({ course, lessons, activeLessonId, onLessonSelect, onClose, hasPaidAccess }: Props) {
   return (
     <div className="h-full flex flex-col bg-white">
       {/* Header */}
@@ -37,15 +39,19 @@ export default function LessonSidebar({ course, lessons, activeLessonId, onLesso
         ) : (
           lessons.map((lesson, idx) => {
             const isActive = lesson.id === activeLessonId;
+            // Bài trả phí khi chưa có quyền vẫn cho bấm để hiện CTA mua khóa / nâng PRO
+            const blocked = lesson.isLocked && (lesson.isFree || hasPaidAccess);
             return (
               <button
                 key={lesson.id}
-                onClick={() => onLessonSelect(lesson.id)}
-                className={`w-full text-left px-4 py-3 border-b border-slate-50 flex items-start gap-3 transition-colors hover:bg-slate-50 ${isActive ? "bg-orange-50" : ""}`}
+                onClick={() => !blocked && onLessonSelect(lesson.id)}
+                disabled={blocked}
+                title={blocked ? "Hoàn thành bài trước để mở bài này" : lesson.isLocked ? "Bài học trả phí" : undefined}
+                className={`w-full text-left px-4 py-3 border-b border-slate-50 flex items-start gap-3 transition-colors hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed ${isActive ? "bg-orange-50" : ""}`}
               >
                 {/* Index / check */}
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold mt-0.5 ${isActive ? "bg-orange-500 text-white" : "bg-slate-100 text-slate-500"}`}>
-                  {idx + 1}
+                  {lesson.completed ? <CheckCircle2 size={14} className={isActive ? "text-white" : "text-green-500"} /> : lesson.isLocked ? <Lock size={11} /> : idx + 1}
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -60,9 +66,6 @@ export default function LessonSidebar({ course, lessons, activeLessonId, onLesso
                       <span className="text-xs text-green-600 font-medium">Miễn phí</span>
                     )}
                   </div>
-                  {lesson.description && (
-                    <div className="text-xs text-slate-400 mt-0.5 line-clamp-1">{lesson.description}</div>
-                  )}
                 </div>
               </button>
             );

@@ -2,7 +2,9 @@
 import { useEffect, useState, useMemo, Suspense } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 import { lessonsApi, coursesApi } from "@/lib/api";
+import { parseLessonSteps, compileLessonSteps } from "@/lib/lessonContent";
 import { Course, Lesson } from "@/lib/types";
 import { 
   ArrowLeft, Layout, Server, Database, Plus, Trash2, 
@@ -20,39 +22,16 @@ interface StepItem {
   checkpointPercentage: number;
 }
 
-function parseSingleChunk(descHtml: string, code: string, hasCode: boolean): StepItem {
-  let description = descHtml;
-  let hasCheckpoint = false;
-  let checkpointQuestion = "";
-  let checkpointAnswer = "";
-  let checkpointPercentage = 50;
-  
-  const cpRegex = /<checkpoint[^>]*percentage="([^"]*)"[^>]*question="([^"]*)"[^>]*answer="([^"]*)"[^>]*><\/checkpoint>/i;
-  const cpMatch = descHtml.match(cpRegex);
-  if (cpMatch) {
-    hasCheckpoint = true;
-    checkpointPercentage = parseFloat(cpMatch[1]) || 50;
-    checkpointQuestion = cpMatch[2];
-    checkpointAnswer = cpMatch[3];
-    description = descHtml.replace(cpRegex, "").trim();
-  }
-  
-  return {
-    id: Math.random().toString(36).substr(2, 9),
-    description,
-    code,
-    hasCode,
-    hasCheckpoint,
-    checkpointQuestion,
-    checkpointAnswer,
-    checkpointPercentage
-  };
+function newStepId() {
+  return Math.random().toString(36).substr(2, 9);
 }
 
-function parseHtmlToSteps(html: string): StepItem[] {
-  if (!html) {
+// Đọc/ghi content qua lib/lessonContent (hỗ trợ HTML, Markdown và định dạng <section data-step>)
+function parseContentToSteps(content: string | null): StepItem[] {
+  const steps = parseLessonSteps(content);
+  if (steps.length === 0) {
     return [{
-      id: Math.random().toString(36).substr(2, 9),
+      id: newStepId(),
       description: "",
       code: "",
       hasCode: false,
@@ -62,67 +41,32 @@ function parseHtmlToSteps(html: string): StepItem[] {
       checkpointPercentage: 50
     }];
   }
-  
-  let cleanHtml = html.trim();
-  if (cleanHtml.startsWith("<div") && cleanHtml.endsWith("</div>")) {
-    const firstClose = cleanHtml.indexOf(">");
-    const lastOpen = cleanHtml.lastIndexOf("<");
-    if (firstClose !== -1 && lastOpen !== -1 && lastOpen > firstClose) {
-      cleanHtml = cleanHtml.slice(firstClose + 1, lastOpen).trim();
-    }
-  }
-  
-  const preRegex = /([\s\S]*?<pre[^>]*>([\s\S]*?)<\/pre>)/gi;
-  const matches = [...cleanHtml.matchAll(preRegex)];
-  const stepsList: StepItem[] = [];
-  
-  if (matches.length === 0) {
-    stepsList.push(parseSingleChunk(cleanHtml, "", false));
-  } else {
-    matches.forEach((m) => {
-      const fullChunk = m[1];
-      const codeContent = m[2]
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&amp;/g, "&");
-      
-      const preTagStartIndex = fullChunk.toLowerCase().lastIndexOf("<pre");
-      const description = fullChunk.slice(0, preTagStartIndex).trim();
-      stepsList.push(parseSingleChunk(description, codeContent, true));
-    });
-    
-    const lastIndex = matches[matches.length - 1].index ?? 0;
-    const lastMatchLength = matches[matches.length - 1][0].length;
-    const leftover = cleanHtml.slice(lastIndex + lastMatchLength).trim();
-    if (leftover && leftover.replace(/<\/?div[^>]*>/gi, "").trim()) {
-      stepsList.push(parseSingleChunk(leftover, "", false));
-    }
-  }
-  return stepsList;
+  return steps.map((s) => ({
+    id: newStepId(),
+    description: s.description,
+    code: s.code ?? "",
+    hasCode: s.code !== null,
+    hasCheckpoint: !!s.checkpoint,
+    checkpointQuestion: s.checkpoint?.question ?? "",
+    checkpointAnswer: s.checkpoint?.answer ?? "",
+    checkpointPercentage: s.checkpoint?.percentage ?? 50
+  }));
 }
 
 function compileStepsToHtml(steps: StepItem[]): string {
-  let html = `<div style="font-family: Arial, sans-serif; line-height: 1.8;">\n`;
-  steps.forEach(step => {
-    html += `${step.description}\n`;
-    if (step.hasCode && step.code) {
-      const escapedCode = step.code
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-      html += `<pre>\n${escapedCode}\n</pre>\n`;
-    }
-    if (step.hasCheckpoint && step.checkpointQuestion && step.checkpointAnswer) {
-      html += `<checkpoint percentage="${step.checkpointPercentage || 50}" question="${step.checkpointQuestion}" answer="${step.checkpointAnswer}"></checkpoint>\n`;
-    }
-  });
-  html += `</div>`;
-  return html;
+  return compileLessonSteps(steps.map((s) => ({
+    description: s.description,
+    code: s.hasCode ? s.code : null,
+    checkpoint: s.hasCheckpoint
+      ? { question: s.checkpointQuestion, answer: s.checkpointAnswer, percentage: s.checkpointPercentage }
+      : null
+  })));
 }
 
 function LessonStepsEditorContent() {
   const params = useParams();
   const router = useRouter();
+  const [confirm, confirmDialog] = useConfirm();
   
   const courseId = Number(params.id);
   const lessonId = Number(params.lessonId);
@@ -150,7 +94,8 @@ function LessonStepsEditorContent() {
       .then(([c, l]) => {
         setCourse(c);
         setLesson(l);
-        const parsed = parseHtmlToSteps(l.content || "");
+        // Bài dạng Markdown / định dạng cũ đều đọc được; khi lưu sẽ thành <section data-step>
+        const parsed = parseContentToSteps(l.content);
         setSteps(parsed);
         setSelectedStepIndex(0);
       })
@@ -188,13 +133,13 @@ function LessonStepsEditorContent() {
     setSelectedStepIndex(steps.length);
   };
 
-  const handleDeleteStep = (index: number, e: React.MouseEvent) => {
+  const handleDeleteStep = async (index: number, e: React.MouseEvent) => {
     e.stopPropagation();
     if (steps.length <= 1) {
       alert("Bài học cần tối thiểu 1 bước học.");
       return;
     }
-    if (!confirm("Bạn có chắc chắn muốn xóa bước học này không?")) return;
+    if (!(await confirm({ title: "Xóa bước học này?", confirmLabel: "Xóa", danger: true }))) return;
 
     const newSteps = steps.filter((_, idx) => idx !== index);
     setSteps(newSteps);
@@ -234,7 +179,7 @@ function LessonStepsEditorContent() {
         durationMinutes: lesson.durationMinutes,
         isFree: lesson.isFree,
         content: compiledContent,
-        courseId
+        orderIndex: lesson.orderIndex
       });
       setSuccessMsg("Lưu nội dung bài học thành công!");
       setTimeout(() => setSuccessMsg(""), 3000);
@@ -304,8 +249,9 @@ function LessonStepsEditorContent() {
           <span>{errorMsg}</span>
         </div>
       )}
+      {confirmDialog}
       {successMsg && (
-        <div className="flex items-start gap-2.5 p-4 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl mb-6 text-xs font-semibold">
+        <div className="flex items-start gap-2.5 p-4 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl fixed top-4 right-4 z-[60] shadow-lg max-w-sm text-xs font-semibold">
           <CheckCircle2 size={16} className="shrink-0 mt-0.5 text-emerald-500" />
           <span>{successMsg}</span>
         </div>

@@ -1,9 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
-import { CheckCircle2, XCircle, Sparkles, BookOpen, ShieldAlert, X } from "lucide-react";
+import { CheckCircle2, XCircle, Sparkles, BookOpen, ShieldAlert, X, Clock } from "lucide-react";
+
+export type PaymentResultStatus = "success" | "cancel" | "pending";
+
+/**
+ * Đọc `?payment=success|cancel|pending` (do /payment/success|cancel gắn vào sau khi
+ * kiểm tra đơn qua GET /payment/orders/{orderCode}) rồi xóa query khỏi URL.
+ */
+export function readPaymentResultParam(): PaymentResultStatus | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const status = params.get("payment");
+  if (status !== "success" && status !== "cancel" && status !== "pending") return null;
+  params.delete("payment");
+  const rest = params.toString();
+  window.history.replaceState({}, "", window.location.pathname + (rest ? `?${rest}` : ""));
+  return status;
+}
 
 interface PaymentResultModalProps {
-  status: "success" | "cancel";
+  status: PaymentResultStatus;
   onClose: () => void;
 }
 
@@ -74,6 +91,26 @@ export default function PaymentResultModal({ status, onClose }: PaymentResultMod
             >
               <BookOpen size={14} />
               Bắt đầu học ngay
+            </button>
+          </div>
+        ) : status === "pending" ? (
+          <div>
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 bg-amber-50 border border-amber-100 rounded-full flex items-center justify-center text-amber-500">
+                <Clock size={36} className="stroke-[1.5]" />
+              </div>
+            </div>
+
+            <h1 className="text-xl md:text-2xl font-black text-slate-900 mb-2">Đang chờ xác nhận thanh toán</h1>
+            <p className="text-slate-500 text-xs leading-relaxed mb-6">
+              Cổng thanh toán chưa xác nhận giao dịch của bạn. Vui lòng kiểm tra lại lịch sử giao dịch sau ít phút.
+            </p>
+
+            <button
+              onClick={onClose}
+              className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-all duration-200 border border-slate-950"
+            >
+              Đóng
             </button>
           </div>
         ) : (

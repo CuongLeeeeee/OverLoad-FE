@@ -17,6 +17,7 @@
     "dompurify": "^3.4.8",
     "html-react-parser": "^6.1.2",
     "lucide-react": "^0.383.0",
+    "marked": "^18.0.14",
     "next": "^16.2.6",
     "react": "^18",
     "react-dom": "^18"

@@ -3,21 +3,25 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ArrowLeft, Zap, Loader2, Sparkles, Trophy, Star, Wallet, AlertCircle, Clock, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { paymentApi, enrollmentsApi } from "@/lib/api";
+import { meApi, startCheckout, refreshCurrentUser } from "@/lib/api";
 import { getUser } from "@/lib/auth";
-import PaymentResultModal from "@/components/payment/PaymentResultModal";
+import { ProPackage, Wallet as WalletInfo } from "@/lib/types";
+import PaymentResultModal, { readPaymentResultParam, PaymentResultStatus } from "@/components/payment/PaymentResultModal";
+
+const PRO_PACKAGE: Record<"month" | "year", ProPackage> = { month: "Month", year: "Year" };
 
 export default function PricingPage() {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [mounted, setMounted] = useState(false);
-  const [paymentResult, setPaymentResult] = useState<"success" | "cancel" | null>(null);
+  const [paymentResult, setPaymentResult] = useState<PaymentResultStatus | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [showConfirmDeposit, setShowConfirmDeposit] = useState<{ show: boolean; amount: number }>({ show: false, amount: 0 });
   const [proExpiration, setProExpiration] = useState<Date | null>(null);
 
   const user = getUser();
+  // TODO(api-v1): chưa có API xác minh sinh viên → luôn false; giá thực tế do BE quyết định khi checkout
   const isStudentApproved = user?.studentVerificationStatus === "APPROVED";
   const monthlyPrice = isStudentApproved ? 48300 : 69000;
   const yearlyPrice = isStudentApproved ? 419300 : 599000;
@@ -26,47 +30,24 @@ export default function PricingPage() {
     setMounted(true);
 
     if (user) {
-      paymentApi.getBalance()
-        .then(res => setBalance(res.balance))
-        .catch(err => console.error(err));
-
-      enrollmentsApi.getByUserDetails(user.id)
-        .then(res => {
-          const proEnrollments = res
-            .filter(e => e.courseSlug === "pro-upgrade-month" || e.courseSlug === "pro-upgrade-year")
-            .map(e => ({
-              enrolledAt: new Date(e.enrolledAt),
-              durationDays: e.courseSlug === "pro-upgrade-month" ? 30 : 365
-            }))
-            .sort((a, b) => a.enrolledAt.getTime() - b.enrolledAt.getTime());
-
-          if (proEnrollments.length > 0) {
-            let expiration: Date | null = null;
-            for (const item of proEnrollments) {
-              if (expiration === null || expiration < item.enrolledAt) {
-                expiration = new Date(item.enrolledAt.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-              } else {
-                expiration = new Date(expiration.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-              }
-            }
-            if (expiration && expiration > new Date()) {
-              setProExpiration(expiration);
-            }
-          }
-        })
-        .catch(err => console.error("Lỗi lấy thông tin gói PRO:", err));
+      loadWallet();
     }
 
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const payStatus = params.get("payment");
-      if (payStatus === "success" || payStatus === "cancel") {
-        setPaymentResult(payStatus);
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, "", newUrl);
-      }
-    }
+    // Chỉ set khi có kết quả: StrictMode (dev) chạy effect 2 lần, lần 2 URL đã bị xóa query
+    const payResult = readPaymentResultParam();
+    if (payResult) setPaymentResult(payResult);
   }, []);
+
+  function applyWallet(wallet: WalletInfo) {
+    setBalance(wallet.balance);
+    setProExpiration(wallet.isPro && wallet.proExpiresAt ? new Date(wallet.proExpiresAt) : null);
+  }
+
+  function loadWallet() {
+    meApi.getWallet()
+      .then(applyWallet)
+      .catch(err => console.error("Lỗi lấy thông tin ví / PRO:", err));
+  }
 
   const getRemainingTimeString = (expirationDate: Date) => {
     const now = new Date();
@@ -100,17 +81,7 @@ export default function PricingPage() {
     setError("");
 
     try {
-      const res = await paymentApi.createProLink({
-        packageType,
-        returnUrl: `${window.location.origin}/payment/success?from=${encodeURIComponent("/pricing")}`,
-        cancelUrl: `${window.location.origin}/payment/cancel?from=${encodeURIComponent("/pricing")}`,
-      });
-
-      if (res && res.checkoutUrl) {
-        window.location.href = res.checkoutUrl;
-      } else {
-        throw new Error("Không thể tạo liên kết thanh toán PRO.");
-      }
+      await startCheckout({ type: "Pro", package: PRO_PACKAGE[packageType] }, "/pricing");
     } catch (err: any) {
       setError(err?.message || "Có lỗi xảy ra khi kết nối tới cổng thanh toán. Vui lòng thử lại.");
       setLoading(null);
@@ -127,36 +98,11 @@ export default function PricingPage() {
     setError("");
 
     try {
-      await paymentApi.buyProWithBalance({ packageType });
+      // Không đủ tiền → 400
+      const wallet = await meApi.purchasePro(PRO_PACKAGE[packageType]);
+      applyWallet(wallet);
       setPaymentResult("success");
-      const updatedBalance = await paymentApi.getBalance();
-      setBalance(updatedBalance.balance);
-
-      enrollmentsApi.getByUserDetails(user.id)
-        .then(res => {
-          const proEnrollments = res
-            .filter(e => e.courseSlug === "pro-upgrade-month" || e.courseSlug === "pro-upgrade-year")
-            .map(e => ({
-              enrolledAt: new Date(e.enrolledAt),
-              durationDays: e.courseSlug === "pro-upgrade-month" ? 30 : 365
-            }))
-            .sort((a, b) => a.enrolledAt.getTime() - b.enrolledAt.getTime());
-
-          if (proEnrollments.length > 0) {
-            let expiration: Date | null = null;
-            for (const item of proEnrollments) {
-              if (expiration === null || expiration < item.enrolledAt) {
-                expiration = new Date(item.enrolledAt.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-              } else {
-                expiration = new Date(expiration.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-              }
-            }
-            if (expiration && expiration > new Date()) {
-              setProExpiration(expiration);
-            }
-          }
-        })
-        .catch(err => console.error(err));
+      refreshCurrentUser().catch(() => {});
     } catch (err: any) {
       setError(err?.message || "Có lỗi xảy ra khi thanh toán bằng số dư. Vui lòng thử lại.");
     } finally {
@@ -186,6 +132,18 @@ export default function PricingPage() {
           <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
           Quay lại Trang chủ
         </Link>
+        <div className="flex items-center gap-2">
+        {user && balance !== null && (
+          <Link
+            href="/deposit"
+            title="Nạp thêm tiền"
+            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:border-blue-300 px-3 py-1.5 rounded-full shadow-sm transition-colors"
+          >
+            <Wallet size={14} className="text-blue-600" />
+            <span className="text-xs text-slate-500">Số dư ví:</span>
+            <span className="text-xs font-bold text-slate-800">{balance.toLocaleString("vi-VN")}đ</span>
+          </Link>
+        )}
         <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm">
           <Sparkles size={14} className="text-amber-500 animate-pulse" />
           <span className="text-xs font-bold text-slate-600">Nâng cấp để bứt phá giới hạn</span>
@@ -198,6 +156,7 @@ export default function PricingPage() {
               </span>
             </>
           )}
+        </div>
         </div>
       </div>
 
@@ -472,7 +431,7 @@ export default function PricingPage() {
             </div>
             <h3 className="text-base font-extrabold text-slate-900 mb-2">Số dư không đủ</h3>
             <p className="text-slate-500 text-xs leading-relaxed mb-6">
-              Bạn không đủ tiền để mua khóa học, có tiếp tục nạp tiền không?
+              Số dư ví không đủ để nâng cấp PRO. Bạn có muốn nạp thêm tiền không?
             </p>
             <div className="flex gap-3">
               <button

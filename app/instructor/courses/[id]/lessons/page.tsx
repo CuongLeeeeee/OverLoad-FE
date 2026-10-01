@@ -2,7 +2,9 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 import { coursesApi, lessonsApi } from "@/lib/api";
+import { parseLessonSteps } from "@/lib/lessonContent";
 import { Course, Lesson, CreateLessonRequest } from "@/lib/types";
 import {
   Plus, Edit, Trash2, ArrowLeft, AlertCircle, RefreshCw,
@@ -11,6 +13,7 @@ import {
 
 export default function InstructorLessonsPage() {
   const router = useRouter();
+  const [confirm, confirmDialog] = useConfirm();
   const params = useParams();
   const courseId = Number(params.id);
 
@@ -52,7 +55,9 @@ export default function InstructorLessonsPage() {
         coursesApi.getLessons(courseId),
       ]);
       setCourse(c);
-      setLessons(ls);
+      // GET /courses/{id}/lessons không trả content/description → lấy chi tiết từng bài
+      const details = await Promise.all(ls.map((l) => lessonsApi.getById(l.id)));
+      setLessons(details.sort((a, b) => a.orderIndex - b.orderIndex));
     } catch (err: any) {
       setErrorMsg(err.message || "Không thể tải dữ liệu.");
     } finally {
@@ -96,10 +101,13 @@ export default function InstructorLessonsPage() {
     setErrorMsg("");
     try {
       if (editingLesson) {
-        await lessonsApi.update(editingLesson.id, {
+        const updated = await lessonsApi.update(editingLesson.id, {
           ...formData,
-          courseId,
+          orderIndex: editingLesson.orderIndex,
         });
+        // Cập nhật ngay danh sách (không tải lại cả trang)
+        setLessons((prev) => prev.map((l) => (l.id === editingLesson.id ? { ...l, ...formData, ...updated } : l)));
+        setModalOpen(false);
         triggerSuccess(`Đã cập nhật bài học "${formData.title}"`);
       } else {
         const newL = await lessonsApi.create({
@@ -119,7 +127,7 @@ export default function InstructorLessonsPage() {
 
   // Delete lesson
   const handleDelete = async (id: number, title: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa bài học "${title}"?`)) return;
+    if (!(await confirm({ title: `Xóa bài học "${title}"?`, message: "Không thể hoàn tác.", confirmLabel: "Xóa", danger: true }))) return;
     setErrorMsg("");
     try {
       await lessonsApi.delete(id);
@@ -130,11 +138,8 @@ export default function InstructorLessonsPage() {
     }
   };
 
-  // Count <pre> blocks in content
-  const countSteps = (content: string): number => {
-    const matches = content.match(/<pre[\s>]/gi);
-    return matches ? matches.length : 0;
-  };
+  // Số bước của bài (kể cả bước không có code, bài Markdown và định dạng cũ)
+  const countSteps = (content: string | null): number => parseLessonSteps(content).length;
 
   if (loading) {
     return (
@@ -187,8 +192,9 @@ export default function InstructorLessonsPage() {
           <span>{errorMsg}</span>
         </div>
       )}
+      {confirmDialog}
       {successMsg && (
-        <div className="flex items-start gap-2.5 p-4 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl mb-6 text-xs font-semibold">
+        <div className="flex items-start gap-2.5 p-4 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl fixed top-4 right-4 z-[60] shadow-lg max-w-sm text-xs font-semibold">
           <AlertCircle size={16} className="shrink-0 mt-0.5" />
           <span>{successMsg}</span>
         </div>
@@ -211,7 +217,7 @@ export default function InstructorLessonsPage() {
           </div>
           <div>
             <span className="text-lg font-black text-slate-900 block">
-              {lessons.reduce((sum, l) => sum + countSteps(l.content || ""), 0)}
+              {lessons.reduce((sum, l) => sum + countSteps(l.content), 0)}
             </span>
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Code Steps</span>
           </div>
@@ -249,7 +255,7 @@ export default function InstructorLessonsPage() {
         ) : (
           <div className="flex flex-col gap-3">
             {lessons.map((lesson, index) => {
-              const steps = countSteps(lesson.content || "");
+              const steps = countSteps(lesson.content);
 
               return (
                 <div 

@@ -1,4 +1,4 @@
-import { User } from "./types";
+import { AuthResult, User } from "./types";
 
 const TOKEN_KEY = "ol_access_token";
 const REFRESH_KEY = "ol_refresh_token";
@@ -38,6 +38,14 @@ export function getUser(): User | null {
   } catch {
     return null;
   }
+}
+
+// ── Auth result (login / register / refresh) ──────────────────────────────────
+// Refresh token được xoay vòng: luôn lưu cặp token mới.
+export function storeAuthResult(result: AuthResult) {
+  setToken(result.accessToken);
+  setRefreshToken(result.refreshToken);
+  saveUser(result.user);
 }
 
 // ── Clear all ─────────────────────────────────────────────────────────────────

@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
+import { API_BASE_URL } from "@/lib/api";
 
 export default function DebugPage() {
-  const [baseUrl, setBaseUrl] = useState("https://localhost:53483");
+  const [baseUrl, setBaseUrl] = useState(API_BASE_URL);
   const [path, setPath] = useState("/courses");
-  const [params, setParams] = useState("page=1&pageSize=10");
+  const [params, setParams] = useState("pageNumber=1&pageSize=10");
   const [method, setMethod] = useState("GET");
   const [body, setBody] = useState("");
   const [token, setToken] = useState("");
@@ -67,13 +68,13 @@ export default function DebugPage() {
 
   // Quick presets based on API docs
   const presets = [
-    { label: "GET /courses", path: "/courses", params: "page=1&pageSize=10", method: "GET", body: "" },
+    { label: "GET /courses", path: "/courses", params: "pageNumber=1&pageSize=10", method: "GET", body: "" },
     { label: "GET /courses (no params)", path: "/courses", params: "", method: "GET", body: "" },
-    { label: "GET /api/courses", path: "/api/courses", params: "page=1&pageSize=10", method: "GET", body: "" },
     { label: "GET /courses/1", path: "/courses/1", params: "", method: "GET", body: "" },
-    { label: "GET /lessons", path: "/lessons", params: "", method: "GET", body: "" },
+    { label: "GET /me", path: "/me", params: "", method: "GET", body: "" },
+    { label: "GET /me/wallet", path: "/me/wallet", params: "", method: "GET", body: "" },
     { label: "POST /auth/login", path: "/auth/login", params: "", method: "POST", body: JSON.stringify({ email: "user@example.com", password: "123456" }, null, 2) },
-    { label: "POST /users (register)", path: "/users", params: "", method: "POST", body: JSON.stringify({ email: "test@example.com", password: "123456", fullName: "Test User", role: "Student" }, null, 2) },
+    { label: "POST /auth/register", path: "/auth/register", params: "", method: "POST", body: JSON.stringify({ email: "test@example.com", password: "123456", fullName: "Test User" }, null, 2) },
   ];
 
   const statusColor = result?.status
@@ -185,8 +186,8 @@ export default function DebugPage() {
               {result.status === 404 && (
                 <div style={{ marginBottom: 12, padding: 10, background: "#422006", borderRadius: 6, fontSize: 12, color: "#fed7aa", lineHeight: 1.6 }}>
                   <strong>404 - Không tìm thấy endpoint.</strong> Hãy thử:<br/>
-                  • Đổi path: <code>/courses</code> → <code>/api/courses</code><br/>
-                  • Kiểm tra xem BE có yêu cầu prefix <code>/api</code> không<br/>
+                  • Base URL phải kết thúc bằng <code>/api/v1</code>, path tương đối (vd <code>/courses</code>)<br/>
+                  • Kiểm tra route trong đặc tả API v1<br/>
                   • Thử bỏ query params xem có bớt 404 không<br/>
                   • Kiểm tra Swagger UI của BE (thường ở <code>/swagger</code>)
                 </div>

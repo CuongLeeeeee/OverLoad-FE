@@ -1,18 +1,21 @@
 "use client";
 import { useState, useRef, useEffect, useMemo } from "react";
-import parse, { domToReact, Element } from "html-react-parser";
+import parse, { domToReact, Element, DOMNode, HTMLReactParserOptions } from "html-react-parser";
 import { Course, Lesson } from "@/lib/types";
 import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw } from "lucide-react";
 import CodeEditor from "./CodeEditor";
 import LivePreview from "./LivePreview";
-import { getUser } from "@/lib/auth";
-import { progressApi } from "@/lib/api";
+import { isLoggedIn } from "@/lib/auth";
+import { meApi } from "@/lib/api";
+import { parseLessonSteps, toEditorLanguage, guessEditorLanguage, EditorLanguage } from "@/lib/lessonContent";
 
 interface Props {
   lesson: Lesson;
   course: Course;
   activeTab: "desc" | "qa" | "author";
   onTabChange: (tab: "desc" | "qa" | "author") => void;
+  /** Gọi khi bài vừa được đánh dấu hoàn thành (để làm mới danh sách bài / mở bài tiếp theo) */
+  onCompleted?: () => void;
 }
 
 interface CheckpointData {
@@ -89,14 +92,16 @@ function CheckpointOverlay({ question, correctAnswer, onSolve }: CheckpointOverl
   );
 }
 
-// Detect language from lesson template (simple heuristic)
-function detectLanguage(code: string): string {
-  if (code.includes("<html") || code.includes("<div") || code.includes("<p>")) return "html";
-  if (code.includes("{") && code.includes(":") && !code.includes("function")) return "css";
-  return "javascript";
+// Thẻ cấp tài liệu còn sót lại khi parse: html/body → giữ nội dung con, head/meta/... → bỏ
+const UNWRAP_TAGS = new Set(["html", "body"]);
+const DROP_TAGS = new Set(["head", "title", "meta", "link", "base", "script"]);
+
+// Ngôn ngữ editor: ưu tiên ngôn ngữ ghi trong content (```html), sau đó đoán từ code
+function detectLanguage(code: string, declared?: string | null): EditorLanguage {
+  return toEditorLanguage(declared) ?? guessEditorLanguage(code);
 }
 
-export default function LessonContent({ lesson, course, activeTab, onTabChange }: Props) {
+export default function LessonContent({ lesson, course, activeTab, onTabChange, onCompleted }: Props) {
   const defaultLanguage = lesson.language || detectLanguage(lesson.template ?? "");
   const [selectedLanguage, setSelectedLanguage] = useState<"javascript" | "html" | "css">(defaultLanguage as "javascript" | "html" | "css");
   const [userCode, setUserCode] = useState(lesson.template ?? "");
@@ -104,28 +109,11 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
   const [editorHeight, setEditorHeight] = useState(50); // percentage
   const [activeStepIndex, setActiveStepIndex] = useState(0);
 
-  // Parse all <pre> blocks from content as steps
-  function getAllPreCodes(html: string): string[] {
-    const results: string[] = [];
-    const regex = /<pre[^>]*>([\s\S]*?)<\/pre>/gi;
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      results.push(
-        match[1]
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&amp;/g, '&')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&nbsp;/g, ' ')
-          .trim()
-      );
-    }
-    return results;
-  }
-
-  const allSteps = useMemo(() => (lesson.content ? getAllPreCodes(lesson.content) : []), [lesson.content]);
-  const totalSteps = allSteps.length;
+  // Content (HTML / Markdown, định dạng mới hoặc cũ) → danh sách step
+  const steps = useMemo(() => parseLessonSteps(lesson.content), [lesson.content]);
+  // Code theo từng step; null = step không có code (giữ nguyên code đang có trong editor)
+  const allSteps = useMemo(() => steps.map((s) => s.code), [steps]);
+  const totalSteps = steps.length;
 
   const leftScrollContainerRef = useRef<HTMLDivElement>(null);
   const isAutoScrollingRef = useRef(false);
@@ -139,24 +127,23 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
   const lockPositionRef = useRef<number | null>(null);
   const lastSaveTimeRef = useRef(0);
 
-  const user = getUser();
-  const userId = user?.id;
+  const loggedIn = isLoggedIn();
+  const completedSentRef = useRef(false);
 
   // Load progress from backend
   useEffect(() => {
-    if (!userId || !lesson.id) {
+    completedSentRef.current = false;
+    if (!loggedIn || !lesson.id) {
       setCompletedCheckpoints([]);
       setIsLocked(false);
       setScrollPercentage(0);
       return;
     }
 
-    // Skip if no auth token
-    const token = typeof window !== "undefined" ? localStorage.getItem("ol_access_token") : null;
-    if (!token) return;
-
-    progressApi.getUserLesson(userId, lesson.id)
+    // 404 = chưa có tiến độ cho bài này
+    meApi.getLessonProgress(lesson.id)
       .then((res) => {
+        completedSentRef.current = res.completed;
         if (res) {
           const completedCount = res.unlockedCheckpointIndex;
           const completedList: number[] = [];
@@ -180,112 +167,79 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
       .catch(() => {
         // Silently ignore auth/network errors
       });
-  }, [lesson.id, userId]);
+  }, [lesson.id, loggedIn]);
 
-  // Save progress helper
+  // Vị trí cuộn chưa được lưu (null = đã lưu hết)
+  const pendingProgressRef = useRef<{ percentage: number; completedCount: number } | null>(null);
+  const idleSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushProgress = () => {
+    if (idleSaveTimerRef.current) {
+      clearTimeout(idleSaveTimerRef.current);
+      idleSaveTimerRef.current = null;
+    }
+    const pending = pendingProgressRef.current;
+    if (!pending) return;
+    pendingProgressRef.current = null;
+    saveProgress(pending.percentage, pending.completedCount);
+  };
+
+  // Lưu nốt khi đổi bài / rời trang / ẩn tab
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushProgress();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      flushProgress();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lesson.id]);
+
+  // Save progress helper — % khóa học do server tự tính
   const saveProgress = (percentage: number, completedCount: number, isFinished = false) => {
-    if (!userId || !lesson.id) return;
-    // Skip if no auth token
-    const token = typeof window !== "undefined" ? localStorage.getItem("ol_access_token") : null;
-    if (!token) return;
-    progressApi.upsert({
-      userId,
-      lessonId: lesson.id,
-      lastScrollPercentage: percentage,
+    if (!loggedIn || !lesson.id) return;
+    const completed = isFinished || percentage >= 98;
+    meApi.upsertLessonProgress(lesson.id, {
+      lastScrollPercentage: Math.round(Math.min(100, Math.max(0, percentage))),
       unlockedCheckpointIndex: completedCount,
-      completed: isFinished || percentage >= 98,
+      completed,
       lastPositionSeconds: 0,
       watchTimeSeconds: 0
-    }).catch(() => { /* silently ignore */ });
+    })
+      .then((res) => {
+        if (res.completed && !completedSentRef.current) {
+          completedSentRef.current = true;
+          onCompleted?.();
+        }
+      })
+      .catch(() => { /* silently ignore */ });
   };
 
   // Reset editor code & language whenever the lesson changes
   useEffect(() => {
-    const lang = lesson.language || detectLanguage(lesson.template ?? lesson.content ?? "");
+    const firstCode = allSteps.find((c): c is string => c !== null) ?? "";
+    const declared = steps.find((s) => s.code !== null && toEditorLanguage(s.language))?.language;
+    const lang = lesson.language || detectLanguage(lesson.template || firstCode || lesson.content || "", declared);
     setSelectedLanguage(lang as "javascript" | "html" | "css");
     setActiveStepIndex(0);
 
-    let code = lesson.template ?? "";
-    if (!code && allSteps.length > 0) {
-      code = allSteps[0];
-    }
+    const code = lesson.template || firstCode;
     setUserCode(code);
     setRunKey(k => k + 1);
   }, [lesson.id, allSteps]);
 
-  // Parse checkpoints from lesson content
-  const checkpoints = useMemo(() => {
-    if (!lesson.content) return [];
-    
-    const checkpointsList: CheckpointData[] = [];
-    const preRegex = /<pre[^>]*>[\s\S]*?<\/pre>/gi;
-    const checkpointRegex = /<checkpoint\s+([^>]*?)>/gi;
-    
-    const preMatches = [...lesson.content.matchAll(preRegex)];
-    const checkpointMatches = [...lesson.content.matchAll(checkpointRegex)];
-    
-    checkpointMatches.forEach((match) => {
-      const matchIndex = match.index ?? 0;
-      // Find how many pre blocks appear before this checkpoint match
-      const preCountBefore = preMatches.filter(pm => (pm.index ?? 0) < matchIndex).length;
-      const stepIndex = Math.max(0, preCountBefore - 1);
-      
-      const attrString = match[1];
-      const questionMatch = attrString.match(/question="([^"]*)"/i);
-      const answerMatch = attrString.match(/answer="([^"]*)"/i);
-      const percentageMatch = attrString.match(/percentage="([^"]*)"/i);
-      
-      if (questionMatch && answerMatch) {
-        checkpointsList.push({
-          stepIndex,
-          question: questionMatch[1],
-          correctAnswer: answerMatch[1],
-          percentage: percentageMatch ? parseFloat(percentageMatch[1]) : 99
-        });
-      }
-    });
-    
-    return checkpointsList;
-  }, [lesson.content]);
-
-  // Split HTML into step chunks
-  const stepChunks = useMemo(() => {
-    let cleanHtml = lesson.content ? lesson.content.replace(/<checkpoint[^>]*>[\s\S]*?<\/checkpoint>/gi, "") : "";
-    cleanHtml = cleanHtml.trim();
-    
-    // Strip outer wrapping div if it exists
-    if (cleanHtml.startsWith("<div") && cleanHtml.endsWith("</div>")) {
-      const firstClose = cleanHtml.indexOf(">");
-      const lastOpen = cleanHtml.lastIndexOf("<");
-      if (firstClose !== -1 && lastOpen !== -1 && lastOpen > firstClose) {
-        cleanHtml = cleanHtml.slice(firstClose + 1, lastOpen).trim();
-      }
-    }
-    
-    if (!cleanHtml) return [];
-    
-    const regex = /([\s\S]*?<pre[^>]*>[\s\S]*?<\/pre>)/gi;
-    const matches = [...cleanHtml.matchAll(regex)];
-    
-    if (matches.length === 0) {
-      return [cleanHtml];
-    }
-    
-    const chunks = matches.map(m => m[0]);
-    
-    const lastIndex = matches[matches.length - 1].index ?? 0;
-    const lastMatchLength = matches[matches.length - 1][0].length;
-    const leftover = cleanHtml.slice(lastIndex + lastMatchLength).trim();
-    
-    if (leftover && leftover.replace(/<\/?div[^>]*>/gi, "").trim()) {
-      chunks[chunks.length - 1] += leftover;
-    }
-    
-    return chunks;
-  }, [lesson.content]);
+  // Checkpoint của từng step (checkpoint gắn với step chứa nó)
+  const checkpoints = useMemo<CheckpointData[]>(
+    () => steps.flatMap((s, stepIndex) => s.checkpoint
+      ? [{ stepIndex, question: s.checkpoint.question, correctAnswer: s.checkpoint.answer, percentage: s.checkpoint.percentage }]
+      : []),
+    [steps]
+  );
 
   // Load step into editor
-  function loadStep(stepIndex: number, code: string, scroll = true) {
+  function loadStep(stepIndex: number, code: string | null, scroll = true) {
     // Check if the target step is locked behind an unsolved checkpoint
     const hasUnsolvedCheckpointBefore = checkpoints.some(
       cp => cp.stepIndex < stepIndex && !completedCheckpoints.includes(cp.stepIndex)
@@ -295,8 +249,10 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
     }
 
     setActiveStepIndex(stepIndex);
-    setUserCode(code);
-    setRunKey(k => k + 1);
+    if (code !== null) {
+      setUserCode(code);
+      setRunKey(k => k + 1);
+    }
 
     if (scroll) {
       const el = document.getElementById(`step-card-${stepIndex}`);
@@ -332,8 +288,10 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
             if (stepCode !== undefined) {
               setActiveStepIndex((prevIdx) => {
                 if (prevIdx !== stepIdx) {
-                  setUserCode(stepCode);
-                  setRunKey((k) => k + 1);
+                  if (stepCode !== null) {
+                    setUserCode(stepCode);
+                    setRunKey((k) => k + 1);
+                  }
                   return stepIdx;
                 }
                 return prevIdx;
@@ -377,7 +335,9 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
     lockPositionRef.current = null;
     setActiveCheckpoint(null);
 
-    // Save progress immediately
+    // Save progress immediately (bỏ lần lưu bù đang chờ vì nó mang số checkpoint cũ)
+    pendingProgressRef.current = null;
+    if (idleSaveTimerRef.current) clearTimeout(idleSaveTimerRef.current);
     saveProgress(scrollPercentage, newCompleted.length);
   };
 
@@ -397,13 +357,18 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
       : 0;
 
     setScrollPercentage(percentage);
+    pendingProgressRef.current = { percentage, completedCount: completedCheckpoints.length };
 
     // Throttled save progress
     const now = Date.now();
     if (now - lastSaveTimeRef.current > 5000) {
       lastSaveTimeRef.current = now;
-      saveProgress(percentage, completedCheckpoints.length);
+      flushProgress();
     }
+
+    // Lưu bù khi ngừng cuộn, để số đã lưu khớp với thanh tiến trình
+    if (idleSaveTimerRef.current) clearTimeout(idleSaveTimerRef.current);
+    idleSaveTimerRef.current = setTimeout(flushProgress, 1500);
   };
 
   const dividerRef = useRef<HTMLDivElement>(null);
@@ -664,11 +629,31 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
               </div>
 
               {/* Step chunks rendered as premium cards */}
-              {stepChunks.length > 0 && (
+              {steps.length > 0 && (
                 <div className="pb-[40vh] space-y-16">
-                  {stepChunks.map((chunk, stepIdx) => {
+                  {steps.map((step, stepIdx) => {
                     const isActive = stepIdx === activeStepIndex;
-                    const stepCode = allSteps[stepIdx] ?? "";
+                    const stepCode = step.code;
+                    const preClassName = `bg-slate-900 text-slate-100 p-4 rounded-xl whitespace-pre-wrap break-all border transition-colors ${
+                      isActive ? "border-blue-400" : "border-slate-800"
+                    }`;
+                    const parseOptions: HTMLReactParserOptions = {
+                      replace(node) {
+                        if (!(node instanceof Element)) return;
+                        if (DROP_TAGS.has(node.name)) return <></>;
+                        if (UNWRAP_TAGS.has(node.name)) {
+                          // Giữ nội dung con, vẫn áp dụng replace cho <pre> bên trong
+                          return <>{domToReact(node.children as DOMNode[], parseOptions)}</>;
+                        }
+                        if (node.name === "pre") {
+                          return (
+                            <pre className={preClassName}>
+                              <code>{domToReact(node.children as DOMNode[])}</code>
+                            </pre>
+                          );
+                        }
+                      }
+                    };
                     return (
                       <div
                         key={stepIdx}
@@ -687,7 +672,7 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
                               isActive ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"
                             }`}
                           >
-                            Bước {stepIdx + 1} / {stepChunks.length}
+                            Bước {stepIdx + 1} / {steps.length}
                           </span>
                           {isActive && (
                             <span className="text-xs font-bold text-blue-600 animate-pulse flex items-center gap-1">
@@ -708,21 +693,12 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange }
                             .step-content pre code { background: none; color: inherit; padding: 0; border-radius: 0; font-size: 0.8125rem; line-height: 1.7; }
                           `}</style>
                           <div className="step-content">
-                            {parse(chunk, {
-                              replace(node) {
-                                if (node instanceof Element && node.name === "pre") {
-                                  return (
-                                    <pre
-                                      className={`bg-slate-900 text-slate-100 p-4 rounded-xl whitespace-pre-wrap break-all border transition-colors ${
-                                        isActive ? "border-blue-400" : "border-slate-800"
-                                      }`}
-                                    >
-                                      <code>{domToReact(node.children as any)}</code>
-                                    </pre>
-                                  );
-                                }
-                              }
-                            })}
+                            {parse(step.description, parseOptions)}
+                            {stepCode !== null && (
+                              <pre className={preClassName}>
+                                <code>{stepCode}</code>
+                              </pre>
+                            )}
                           </div>
                         </div>
                       </div>

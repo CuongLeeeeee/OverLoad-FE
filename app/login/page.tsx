@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, ArrowLeft, X, Loader2 } from "lucide-react";
 import { authApi } from "@/lib/api";
-import { setToken, setRefreshToken, saveUser } from "@/lib/auth";
+import { storeAuthResult } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,19 +19,12 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const res = await authApi.login({ email: form.email, password: form.password });
-      setToken(res.accessToken);
-      setRefreshToken(res.refreshToken);
-      saveUser(res.user);
+      storeAuthResult(res);
 
       // Redirect based on role
+      // Admin và Instructor dùng chung khu quản trị /instructor/dashboard
       const role = res.user.role;
-      if (role === "Instructor") {
-        router.push("/instructor/dashboard");
-      } else if (role === "Admin") {
-        router.push("/");
-      } else {
-        router.push("/");
-      }
+      router.push(role === "Instructor" || role === "Admin" ? "/instructor/dashboard" : "/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
     } finally {

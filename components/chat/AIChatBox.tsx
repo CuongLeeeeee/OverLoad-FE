@@ -1,25 +1,9 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { usePathname } from "next/navigation";
-import { getToken } from "@/lib/auth";
+import { chatApi, isApiError } from "@/lib/api";
+import { ChatMessage as Message } from "@/lib/types";
 import { Bot, X, Send, Loader2, MessageCircle, Trash2, ChevronDown } from "lucide-react";
-
-interface Message {
-  role: "user" | "model";
-  content: string;
-}
-
-interface ChatResponse {
-  success: boolean;
-  data: {
-    reply: string;
-    isBlocked: boolean;
-    InputToken: number;
-    OutputToken: number;
-  };
-}
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
 
 const SUGGESTIONS = [
   "Giải thích lỗi này cho tôi",
@@ -131,31 +115,27 @@ export default function AIChatBox() {
     setError("");
 
     try {
-      const token = typeof window !== "undefined" ? getToken() : null;
-      const res = await fetch(`${BASE_URL}/api/Chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ message: content, recentHistory: getRecentHistory() }),
-      });
+      // TODO(api-v1): chưa có API giới hạn số câu hỏi AI mỗi ngày
+      const data = await chatApi.send({ message: content, recentHistory: getRecentHistory() });
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: ChatResponse = await res.json();
-
-      if (data.data.isBlocked) {
-        setError("Tin nhắn bị chặn bởi bộ lọc nội dung.");
+      if (data.isBlocked) {
+        setError(data.blockReason || "Tin nhắn bị chặn bởi bộ lọc nội dung.");
         setMessages((prev) => prev.slice(0, -1));
         return;
       }
 
-      const aiMsg: Message = { role: "model", content: data.data.reply };
+      const aiMsg: Message = { role: "model", content: data.reply };
       setMessages((prev) => [...prev, aiMsg]);
       if (!open) setUnread((n) => n + 1);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Không thể kết nối AI");
+      setError(
+        isApiError(e, 401) ? "Vui lòng đăng nhập để dùng trợ lý AI."
+          : isApiError(e) && (e.status >= 500 || e.status === 0) ? "Trợ lý AI đang tạm thời gián đoạn, vui lòng thử lại sau."
+          : e instanceof Error ? e.message : "Không thể kết nối AI"
+      );
       setMessages((prev) => prev.slice(0, -1));
+      // Trả câu hỏi lại ô nhập để người dùng gửi lại
+      setInput((current) => current || content);
     } finally {
       setLoading(false);
     }

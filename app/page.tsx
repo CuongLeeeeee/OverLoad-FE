@@ -9,11 +9,18 @@ import { ChevronRight, MessageCircle, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { isLoggedIn } from "@/lib/auth";
 import LandingPage from "./landing/page";
-import PaymentResultModal from "@/components/payment/PaymentResultModal";
+import PaymentResultModal, { PaymentResultStatus } from "@/components/payment/PaymentResultModal";
 
 const categoryTitles: Record<string, string> = {
   frontend: "Front-end",
   backend: "Back-end",
+  database: "Database",
+};
+
+// Tên danh mục đúng như BE lưu (route /courses/category/{category} phân biệt hoa thường)
+const categoryApiNames: Record<string, string> = {
+  frontend: "Frontend",
+  backend: "Backend",
   database: "Database",
 };
 
@@ -27,7 +34,7 @@ export default function HomePage() {
   // Safety variables for client-side hydration check
   const [mounted, setMounted] = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [paymentResult, setPaymentResult] = useState<"success" | "cancel" | null>(null);
+  const [paymentResult, setPaymentResult] = useState<PaymentResultStatus | null>(null);
 
   useEffect(() => {
     setAuthed(isLoggedIn());
@@ -41,11 +48,11 @@ export default function HomePage() {
       }
 
       const payStatus = params.get("payment");
-      if (payStatus === "success" || payStatus === "cancel") {
+      if (payStatus === "success" || payStatus === "cancel" || payStatus === "pending") {
         setPaymentResult(payStatus);
       }
 
-      if (catParam || payStatus === "success" || payStatus === "cancel") {
+      if (catParam || payStatus) {
         const newUrl = window.location.pathname;
         window.history.replaceState({}, "", newUrl);
       }
@@ -58,7 +65,7 @@ export default function HomePage() {
     setError("");
 
     const request = selectedCategory
-      ? coursesApi.getByCategory(selectedCategory, { pageSize: 50, isPublished: true })
+      ? coursesApi.getByCategory(categoryApiNames[selectedCategory.toLowerCase()] ?? selectedCategory, { pageSize: 50, isPublished: true })
       : coursesApi.getAll({ pageSize: 50, isPublished: true });
 
     request

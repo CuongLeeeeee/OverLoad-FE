@@ -2,66 +2,86 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { coursesApi, paymentApi } from "@/lib/api";
-import { Course, RevenueStats } from "@/lib/types";
-import { 
-  Plus, Edit, Trash2, BookOpen, AlertCircle, RefreshCw, Layers, Sparkles, DollarSign, TrendingUp, History
+import { useConfirm } from "@/components/ui/ConfirmDialog";
+import { coursesApi, adminApi, instructorApi } from "@/lib/api";
+import {
+  Course, CourseStatus, RevenueStats, UpsertCourseRequest, describeTransaction, TRANSACTION_STATUS_LABEL,
+  COURSE_STATUS_LABEL, canEditCourse, formatCoursePrice
+} from "@/lib/types";
+import { getUser } from "@/lib/auth";
+import {
+  Plus, Edit, Trash2, BookOpen, AlertCircle, RefreshCw, Layers, Sparkles, DollarSign, TrendingUp, History, Send, XCircle
 } from "lucide-react";
+
+const STATUS_BADGE: Record<CourseStatus, string> = {
+  Draft: "bg-slate-50 text-slate-500 border-slate-200",
+  PendingReview: "bg-amber-50 text-amber-600 border-amber-200",
+  Published: "bg-emerald-50 text-emerald-600 border-emerald-200",
+  Rejected: "bg-red-50 text-red-600 border-red-200",
+};
+const STATUS_ORDER: CourseStatus[] = ["Draft", "PendingReview", "Published", "Rejected"];
 
 import { useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 function InstructorDashboardContent() {
   const router = useRouter();
+  const [confirm, confirmDialog] = useConfirm();
   
   const searchParams = useSearchParams();
   const activeCategory = searchParams.get("category")?.toLowerCase() || "";
 
   // States
   const [courses, setCourses] = useState<Course[]>([]);
-  const filteredCourses = useMemo(() => {
+  const [statusFilter, setStatusFilter] = useState<CourseStatus | "">("");
+  const categoryCourses = useMemo(() => {
     if (!activeCategory) return courses;
     return courses.filter((c: Course) => c.category?.toLowerCase() === activeCategory);
   }, [courses, activeCategory]);
+  const filteredCourses = useMemo(
+    () => (statusFilter ? categoryCourses.filter((c) => c.status === statusFilter) : categoryCourses),
+    [categoryCourses, statusFilter]
+  );
+  const [submittingId, setSubmittingId] = useState<number | null>(null);
 
   const [loadingCourses, setLoadingCourses] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
-  // Stats states
+  // Stats states (GET /admin/revenue-stats chỉ dành cho Admin)
+  const [isAdmin, setIsAdmin] = useState(false);
   const [stats, setStats] = useState<RevenueStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
 
   // Modals state
   const [courseModalOpen, setCourseModalOpen] = useState(false);
   const [currentCourseEdit, setCurrentCourseEdit] = useState<Course | null>(null); // null means CREATE new
+  // Giá do Admin đặt (tab Duyệt khóa học); trạng thái đổi qua workflow gửi duyệt
   const [courseFormData, setCourseFormData] = useState<{
     title: string;
     description: string;
     thumbnailUrl: string;
     category: string;
-    price: number;
     level: "Beginner" | "Intermediate" | "Advanced";
-    isPublished: boolean;
   }>({
     title: "",
     description: "",
     thumbnailUrl: "",
     category: "Frontend",
-    price: 0,
     level: "Beginner",
-    isPublished: true
   });
 
-  // Fetch all courses
+  // Instructor: mọi khóa của mình (mọi status). Admin: danh sách khóa chung.
   const fetchCourses = async () => {
     setLoadingCourses(true);
     setErrorMsg("");
     try {
-      const res = await coursesApi.getAll({ pageSize: 100 });
-      // Filter out system courses (PRO upgrade, deposit) — they are not real instructor courses
-      const allCourses = res.items || [];
-      setCourses(allCourses.filter((c: Course) => c.category?.toLowerCase() !== "system"));
+      if (getUser()?.role === "Admin") {
+        const res = await coursesApi.getAll({ pageSize: 100 });
+        setCourses(res.items || []);
+      } else {
+        setCourses(await instructorApi.getCourses());
+      }
     } catch (err: any) {
       setErrorMsg(err.message || "Không thể tải danh sách khóa học.");
     } finally {
@@ -75,7 +95,7 @@ function InstructorDashboardContent() {
   const fetchStats = async () => {
     setLoadingStats(true);
     try {
-      const data = await paymentApi.getStats();
+      const data = await adminApi.getRevenueStats();
       setStats(data);
     } catch (err: any) {
       console.error("Lỗi khi tải thống kê doanh thu:", err);
@@ -87,7 +107,10 @@ function InstructorDashboardContent() {
   useEffect(() => {
     setMounted(true);
     fetchCourses();
-    fetchStats();
+    const admin = getUser()?.role === "Admin";
+    setIsAdmin(admin);
+    if (admin) fetchStats();
+    else setLoadingStats(false);
   }, []);
 
   // Set message helper
@@ -102,12 +125,19 @@ function InstructorDashboardContent() {
     if (!courseFormData.title.trim()) return;
 
     setErrorMsg("");
+    const payload: UpsertCourseRequest = {
+      title: courseFormData.title.trim(),
+      description: courseFormData.description || undefined,
+      thumbnailUrl: courseFormData.thumbnailUrl || undefined,
+      category: courseFormData.category || undefined,
+      level: courseFormData.level,
+    };
     try {
       if (currentCourseEdit) {
-        await coursesApi.update(currentCourseEdit.id, courseFormData);
+        await coursesApi.update(currentCourseEdit.id, payload);
         triggerSuccess(`Đã cập nhật khóa học "${courseFormData.title}"`);
       } else {
-        await coursesApi.create(courseFormData);
+        await coursesApi.create(payload);
         triggerSuccess(`Đã tạo khóa học mới "${courseFormData.title}"`);
       }
       setCourseModalOpen(false);
@@ -119,7 +149,7 @@ function InstructorDashboardContent() {
 
   // Delete Course
   const handleDeleteCourse = async (id: number, title: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa khóa học "${title}" cùng tất cả các bài học bên trong không?`)) return;
+    if (!(await confirm({ title: `Xóa khóa học "${title}"?`, message: "Tất cả bài học bên trong cũng sẽ bị xóa. Không thể hoàn tác.", confirmLabel: "Xóa", danger: true }))) return;
     setErrorMsg("");
     try {
       await coursesApi.delete(id);
@@ -139,9 +169,7 @@ function InstructorDashboardContent() {
         description: course.description || "",
         thumbnailUrl: course.thumbnailUrl || "",
         category: course.category || "Frontend",
-        price: course.price || 0,
-        level: (course.level as any) || "Beginner",
-        isPublished: course.isPublished
+        level: course.level || "Beginner",
       });
     } else {
       setCurrentCourseEdit(null);
@@ -150,12 +178,30 @@ function InstructorDashboardContent() {
         description: "",
         thumbnailUrl: "",
         category: "Frontend",
-        price: 0,
         level: "Beginner",
-        isPublished: true
       });
     }
     setCourseModalOpen(true);
+  };
+
+  // Gửi khóa Draft/Rejected lên Admin duyệt
+  const handleSubmitForReview = async (course: Course) => {
+    if (!(await confirm({
+      title: `Gửi duyệt "${course.title}"?`,
+      message: "Khóa học sẽ chuyển sang trạng thái Chờ duyệt và không sửa được cho tới khi Admin xử lý.",
+      confirmLabel: "Gửi duyệt",
+    }))) return;
+    setErrorMsg("");
+    setSubmittingId(course.id);
+    try {
+      const updated = await instructorApi.submitCourse(course.id);
+      setCourses((prev) => prev.map((c) => (c.id === course.id ? { ...c, ...updated, status: updated?.status ?? "PendingReview" } : c)));
+      triggerSuccess(`Đã gửi duyệt "${course.title}"`);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Không thể gửi duyệt khóa học.");
+    } finally {
+      setSubmittingId(null);
+    }
   };
 
   return (
@@ -172,12 +218,7 @@ function InstructorDashboardContent() {
         </div>
         
         <div className="flex gap-2">
-          <Link
-            href="/instructor/student-verifications"
-            className="flex items-center gap-1 px-3.5 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-all"
-          >
-            Duyệt sinh viên
-          </Link>
+          {/* Duyệt sinh viên / duyệt khóa học đã chuyển sang mục Quản trị (chỉ Admin) ở thanh bên */}
           <button
             onClick={() => openCourseModal()}
             className="flex items-center gap-1 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-[0_4px_16px_rgba(37,99,235,0.2)]"
@@ -194,14 +235,16 @@ function InstructorDashboardContent() {
           <span>{errorMsg}</span>
         </div>
       )}
+      {confirmDialog}
       {successMsg && (
-        <div className="flex items-start gap-2.5 p-4 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl mb-6 text-xs font-semibold">
+        <div className="flex items-start gap-2.5 p-4 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-xl fixed top-4 right-4 z-[60] shadow-lg max-w-sm text-xs font-semibold">
           <AlertCircle size={16} className="shrink-0 mt-0.5" />
           <span>{successMsg}</span>
         </div>
       )}
 
-      {/* Stats Section */}
+      {/* Stats Section (Admin) */}
+      {isAdmin && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
         {/* Revenue Card */}
         <div className="bg-white border border-slate-100 rounded-2xl p-5 flex items-center justify-between shadow-sm relative overflow-hidden">
@@ -211,6 +254,11 @@ function InstructorDashboardContent() {
             <span className="text-2xl font-black text-slate-900 mt-1 block">
               {loadingStats ? "..." : `${stats?.totalRevenue.toLocaleString("vi-VN") ?? 0} VND`}
             </span>
+            {stats && (
+              <span className="text-[10px] text-slate-400 mt-1 block">
+                Khóa học {stats.courseRevenue.toLocaleString("vi-VN")}đ · PRO {stats.proRevenue.toLocaleString("vi-VN")}đ · Nạp ví {stats.depositRevenue.toLocaleString("vi-VN")}đ
+              </span>
+            )}
           </div>
           <div className="w-12 h-12 bg-blue-50 border border-blue-100 rounded-xl flex items-center justify-center text-blue-600 shrink-0">
             <DollarSign size={20} className="stroke-[2]" />
@@ -223,14 +271,20 @@ function InstructorDashboardContent() {
           <div className="z-10">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Lượt Mua Khóa Học & PRO</span>
             <span className="text-2xl font-black text-slate-900 mt-1 block">
-              {loadingStats ? "..." : stats?.coursesSold ?? 0}
+              {loadingStats ? "..." : (stats?.coursesSold ?? 0) + (stats?.proUpgradesSold ?? 0)}
             </span>
+            {stats && (
+              <span className="text-[10px] text-slate-400 mt-1 block">
+                {stats.coursesSold} khóa học · {stats.proUpgradesSold} gói PRO · Số dư ví tồn: {stats.outstandingWalletBalance.toLocaleString("vi-VN")}đ
+              </span>
+            )}
           </div>
           <div className="w-12 h-12 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center justify-center text-emerald-600 shrink-0">
             <TrendingUp size={20} className="stroke-[2]" />
           </div>
         </div>
       </div>
+      )}
 
       {/* Courses List Section */}
       <div className="flex flex-col gap-4">
@@ -241,6 +295,25 @@ function InstructorDashboardContent() {
           <button onClick={fetchCourses} className="text-slate-400 hover:text-slate-655 transition-colors">
             <RefreshCw size={13} />
           </button>
+        </div>
+
+        {/* Lọc theo trạng thái duyệt */}
+        <div className="flex flex-wrap gap-1.5">
+          {([""] as const).concat(STATUS_ORDER as any).map((s: CourseStatus | "") => {
+            const count = s ? categoryCourses.filter((c) => c.status === s).length : categoryCourses.length;
+            const active = statusFilter === s;
+            return (
+              <button
+                key={s || "all"}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                  active ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                {s ? COURSE_STATUS_LABEL[s] : "Tất cả"} ({count})
+              </button>
+            );
+          })}
         </div>
 
         {loadingCourses ? (
@@ -298,28 +371,46 @@ function InstructorDashboardContent() {
                         {course.level}
                       </span>
                       <span className="text-[8px] bg-blue-50 text-blue-600 border border-blue-150 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider shrink-0">
-                        {course.price > 0 ? `${course.price.toLocaleString("vi-VN")}đ` : "Free"}
+                        {formatCoursePrice(course.price ?? 0)} · {course.totalLessons} bài
                       </span>
-                      {!course.isPublished && (
-                        <span className="text-[8px] bg-amber-50 text-amber-600 border border-amber-150 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider shrink-0">
-                          Nháp
+                      {course.status && (
+                        <span className={`text-[8px] border px-1.5 py-0.5 rounded font-bold uppercase tracking-wider shrink-0 ${STATUS_BADGE[course.status]}`}>
+                          {COURSE_STATUS_LABEL[course.status]}
                         </span>
                       )}
                     </div>
                     <p className="text-[10px] text-slate-400 mt-1 truncate">
                       {course.description || "Không có mô tả chi tiết."}
                     </p>
+                    {course.status === "Rejected" && course.rejectionReason && (
+                      <p className="mt-1.5 text-[10px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1 flex items-start gap-1">
+                        <XCircle size={11} className="shrink-0 mt-px" />
+                        <span><strong>Lý do từ chối:</strong> {course.rejectionReason}</span>
+                      </p>
+                    )}
                   </div>
 
                   {/* Action buttons on the right */}
                   <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={() => openCourseModal(course)}
-                      className="p-2 rounded-lg bg-slate-50 text-slate-400 hover:text-blue-600 hover:bg-blue-50 border border-slate-100 transition-all active:scale-90"
-                      title="Chỉnh sửa khóa học"
-                    >
-                      <Edit size={11} />
-                    </button>
+                    {canEditCourse(course) && (
+                      <button
+                        onClick={() => handleSubmitForReview(course)}
+                        disabled={submittingId === course.id}
+                        className="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-[10px] font-bold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                        title="Gửi khóa học lên Admin duyệt"
+                      >
+                        <Send size={10} /> Gửi duyệt
+                      </button>
+                    )}
+                    {canEditCourse(course) && (
+                      <button
+                        onClick={() => openCourseModal(course)}
+                        className="p-2 rounded-lg bg-slate-50 text-slate-400 hover:text-blue-600 hover:bg-blue-50 border border-slate-100 transition-all active:scale-90"
+                        title="Chỉnh sửa khóa học"
+                      >
+                        <Edit size={11} />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDeleteCourse(course.id, course.title)}
                       className="p-2 rounded-lg bg-slate-50 text-slate-400 hover:text-red-650 hover:bg-red-50 border border-slate-100 transition-all active:scale-90"
@@ -335,7 +426,8 @@ function InstructorDashboardContent() {
         )}
       </div>
 
-      {/* Transactions Section */}
+      {/* Transactions Section (Admin) */}
+      {isAdmin && (
       <div className="flex flex-col gap-4 mt-8">
         <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
           <History size={13} className="text-slate-400" /> Lịch sử giao dịch gần đây
@@ -346,7 +438,7 @@ function InstructorDashboardContent() {
             <div className="py-12 text-center text-xs text-slate-400 font-semibold uppercase tracking-widest animate-pulse">
               Đang tải lịch sử giao dịch...
             </div>
-          ) : !stats || stats.transactions.length === 0 ? (
+          ) : !stats || stats.recentTransactions.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-xs flex flex-col items-center justify-center gap-2 bg-white">
               <p className="font-bold text-slate-700">Chưa phát sinh giao dịch nào</p>
             </div>
@@ -364,14 +456,17 @@ function InstructorDashboardContent() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 text-slate-600">
-                  {stats.transactions.map((tx) => (
+                  {stats.recentTransactions.map((tx) => (
                     <tr key={tx.transactionId} className="hover:bg-slate-50/50 transition-colors">
                       <td className="p-4 font-mono font-bold text-[10px] text-slate-400">{tx.orderCode}</td>
-                      <td className="p-4 font-semibold text-slate-800">{tx.userFullName ?? "Học viên"}</td>
-                      <td className="p-4 font-medium text-slate-700">{tx.courseTitle ?? "Khóa học"}</td>
+                      <td className="p-4 font-semibold text-slate-800">{tx.userFullName || "Học viên"}</td>
+                      <td className="p-4 font-medium text-slate-700">
+                        {describeTransaction(tx)}
+                        <span className="ml-1 text-[9px] text-slate-400">({tx.method === "Wallet" ? "Ví" : "PayOS"})</span>
+                      </td>
                       <td className="p-4 font-bold text-blue-600">{(tx.amount).toLocaleString("vi-VN")}đ</td>
                       <td className="p-4 text-slate-400">
-                        {new Date(tx.paymentTime).toLocaleString("vi-VN", {
+                        {new Date(tx.paidAt ?? tx.createdAt).toLocaleString("vi-VN", {
                           year: "numeric",
                           month: "2-digit",
                           day: "2-digit",
@@ -381,13 +476,13 @@ function InstructorDashboardContent() {
                       </td>
                       <td className="p-4 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${
-                          tx.status === "SUCCESS"
+                          tx.status === "Success"
                             ? "bg-emerald-50 text-emerald-600 border-emerald-250"
-                            : tx.status === "PENDING"
+                            : tx.status === "Pending"
                             ? "bg-amber-50 text-amber-600 border-amber-250"
                             : "bg-slate-50 text-slate-500 border-slate-200"
                         }`}>
-                          {tx.status}
+                          {TRANSACTION_STATUS_LABEL[tx.status] ?? tx.status}
                         </span>
                       </td>
                     </tr>
@@ -398,6 +493,7 @@ function InstructorDashboardContent() {
           )}
         </div>
       </div>
+      )}
 
       {/* Course Modal */}
       {courseModalOpen && (
@@ -458,18 +554,7 @@ function InstructorDashboardContent() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-500">Giá khóa học (VND)</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  placeholder="Ví dụ: 99000 (Để 0 nếu miễn phí)"
-                  className="px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
-                  value={courseFormData.price}
-                  onChange={(e) => setCourseFormData({...courseFormData, price: Number(e.target.value)})}
-                />
-              </div>
+              {/* Giá do Admin đặt ở mục "Duyệt khóa học" (PUT /admin/courses/{id}/price) */}
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-slate-500">Ảnh Thumbnail (URL)</label>
@@ -482,18 +567,9 @@ function InstructorDashboardContent() {
                 />
               </div>
 
-              <div className="flex items-center gap-2 mt-1">
-                <input
-                  type="checkbox"
-                  id="isPublished"
-                  className="w-4 h-4 text-blue-600 border-slate-200 rounded focus:ring-blue-500"
-                  checked={courseFormData.isPublished}
-                  onChange={(e) => setCourseFormData({...courseFormData, isPublished: e.target.checked})}
-                />
-                <label htmlFor="isPublished" className="text-xs font-semibold text-slate-600 cursor-pointer">
-                  Công khai khóa học (Cho phép học viên thấy)
-                </label>
-              </div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Khóa học mới ở trạng thái Nháp. Bấm "Gửi duyệt" khi đã sẵn sàng; Admin sẽ duyệt và đặt giá.
+              </p>
 
               <div className="flex justify-end gap-3 mt-4">
                 <button

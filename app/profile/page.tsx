@@ -2,9 +2,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getUser, clearAuth, saveUser } from "@/lib/auth";
+import { getUser, saveUser } from "@/lib/auth";
 import { User } from "@/lib/types";
-import { paymentApi, enrollmentsApi, usersApi } from "@/lib/api";
+import { meApi, usersApi, refreshCurrentUser, logout, API_ORIGIN } from "@/lib/api";
 import {
   LogOut, Mail, Shield, ShieldCheck, BookOpen, Award, Clock, Wallet, ArrowLeft, Loader2, Upload, CheckCircle2, AlertCircle, X, XCircle
 } from "lucide-react";
@@ -37,50 +37,28 @@ export default function ProfilePage() {
     }
     setUser(u);
 
-    // Lấy số dư ví học viên
+    // Lấy số dư ví + trạng thái PRO
     setLoadingBalance(true);
-    paymentApi.getBalance()
-      .then(res => setBalance(res.balance))
+    meApi.getWallet()
+      .then(res => {
+        setBalance(res.balance);
+        setIsPro(res.isPro);
+        setProExpiration(res.isPro && res.proExpiresAt ? new Date(res.proExpiresAt) : null);
+      })
       .catch(err => console.error("Lỗi lấy số dư:", err))
       .finally(() => setLoadingBalance(false));
 
-    // Lấy số lượng khóa học đã đăng ký thực tế
-    enrollmentsApi.getByUserDetails(u.id)
-      .then(res => {
-        const actualEnrollments = res.filter(e => e.courseSlug !== "pro-upgrade-month" && e.courseSlug !== "pro-upgrade-year" && e.courseSlug !== "system-deposit-balance");
-        setCoursesCount(actualEnrollments.length);
-        
-        const hasPro = res.some(e => e.courseSlug === "pro-upgrade-month" || e.courseSlug === "pro-upgrade-year");
-        setIsPro(hasPro);
-
-        // Tính toán hạn PRO
-        const proEnrollments = res
-          .filter(e => e.courseSlug === "pro-upgrade-month" || e.courseSlug === "pro-upgrade-year")
-          .map(e => ({
-            enrolledAt: new Date(e.enrolledAt),
-            durationDays: e.courseSlug === "pro-upgrade-month" ? 30 : 365
-          }))
-          .sort((a, b) => a.enrolledAt.getTime() - b.enrolledAt.getTime());
-
-        if (proEnrollments.length > 0) {
-          let expiration: Date | null = null;
-          for (const item of proEnrollments) {
-            if (expiration === null || expiration < item.enrolledAt) {
-              expiration = new Date(item.enrolledAt.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-            } else {
-              expiration = new Date(expiration.getTime() + item.durationDays * 24 * 60 * 60 * 1000);
-            }
-          }
-          if (expiration && expiration > new Date()) {
-            setProExpiration(expiration);
-          }
-        }
+    // Hồ sơ mới nhất + số khóa đã ghi danh
+    refreshCurrentUser()
+      .then(me => {
+        setCoursesCount(me.enrollments.length);
+        setUser(getUser());
       })
-      .catch(err => console.error("Lỗi lấy số lượng khóa học:", err));
+      .catch(err => console.error("Lỗi lấy hồ sơ:", err));
   }, [router]);
 
-  const handleLogout = () => {
-    clearAuth();
+  const handleLogout = async () => {
+    await logout();
     router.push("/login");
   };
 
@@ -102,6 +80,7 @@ export default function ProfilePage() {
     reader.readAsDataURL(file);
   };
 
+  // TODO(api-v1): chưa có API xác minh sinh viên (upload thẻ SV / duyệt) — BE v1 sẽ trả 404.
   const handleUploadSubmit = async () => {
     if (!selectedFile) return;
 
@@ -175,7 +154,9 @@ export default function ProfilePage() {
     Admin: "Quản trị viên",
   };
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://localhost:53483";
+  const apiUrl = API_ORIGIN;
+  // TODO(api-v1): chưa có API xác minh sinh viên — BE v1 không trả field này, mặc định "NONE"
+  const verificationStatus = user.studentVerificationStatus ?? "NONE";
 
   return (
     <div className="ml-[72px] pt-14 min-h-screen bg-[#eef2fb] flex items-center justify-center">
@@ -235,7 +216,7 @@ export default function ProfilePage() {
                       </span>
 
                       {/* Student verification small button */}
-                      {user.studentVerificationStatus === "APPROVED" ? (
+                      {verificationStatus === "APPROVED" ? (
                         <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-0.5 rounded font-bold uppercase tracking-wider flex items-center gap-1 select-none">
                           <ShieldCheck size={11} className="text-emerald-500" />
                           Đã xác minh thành công
@@ -244,23 +225,23 @@ export default function ProfilePage() {
                         <button
                           onClick={() => setIsVerificationModalOpen(true)}
                           className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase tracking-wider flex items-center gap-1 active:scale-95 transition-all ${
-                            user.studentVerificationStatus === "PENDING"
+                            verificationStatus === "PENDING"
                               ? "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100/60"
-                              : user.studentVerificationStatus === "REJECTED"
+                              : verificationStatus === "REJECTED"
                               ? "bg-red-50 text-red-650 border-red-200 hover:bg-red-100/60"
                               : "bg-slate-50 text-slate-655 border-slate-200 hover:bg-slate-100"
                           }`}
                         >
                           <Shield size={11} className={
-                            user.studentVerificationStatus === "PENDING"
+                            verificationStatus === "PENDING"
                               ? "text-amber-500 animate-pulse"
-                              : user.studentVerificationStatus === "REJECTED"
+                              : verificationStatus === "REJECTED"
                               ? "text-red-500"
                               : "text-slate-400"
                           } />
-                          {user.studentVerificationStatus === "PENDING" && "Đang chờ xác minh"}
-                          {user.studentVerificationStatus === "REJECTED" && "Xác minh bị từ chối"}
-                          {user.studentVerificationStatus === "NONE" && "Xác minh sinh viên"}
+                          {verificationStatus === "PENDING" && "Đang chờ xác minh"}
+                          {verificationStatus === "REJECTED" && "Xác minh bị từ chối"}
+                          {verificationStatus === "NONE" && "Xác minh sinh viên"}
                         </button>
                       )}
                     </>
@@ -351,7 +332,7 @@ export default function ProfilePage() {
               Xác minh Học sinh / Sinh viên
             </h2>
 
-            {(user.studentVerificationStatus === "NONE" || reSubmitMode) && (
+            {(verificationStatus === "NONE" || reSubmitMode) && (
               <div>
                 <p className="text-xs text-slate-500 mb-4 leading-relaxed">
                   Tải ảnh thẻ học sinh/sinh viên làm bằng chứng để nhận thêm <strong className="text-blue-600">30% ưu đãi</strong> khi đăng ký hoặc gia hạn các gói PRO.
@@ -426,7 +407,7 @@ export default function ProfilePage() {
               </div>
             )}
 
-            {user.studentVerificationStatus === "PENDING" && !reSubmitMode && (
+            {verificationStatus === "PENDING" && !reSubmitMode && (
               <div className="flex flex-col gap-4">
                 <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 flex gap-3">
                   <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600 shrink-0">
@@ -467,7 +448,7 @@ export default function ProfilePage() {
               </div>
             )}
 
-            {user.studentVerificationStatus === "REJECTED" && !reSubmitMode && (
+            {verificationStatus === "REJECTED" && !reSubmitMode && (
               <div className="bg-red-50/70 border border-red-200/80 rounded-2xl p-4 flex gap-3">
                 <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center text-red-600 shrink-0">
                   <XCircle size={16} className="stroke-[2.5]" />

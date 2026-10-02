@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import parse, { domToReact, Element, DOMNode, HTMLReactParserOptions } from "html-react-parser";
 import { Course, Lesson } from "@/lib/types";
-import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw, X } from "lucide-react";
+import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw, X, CheckCircle2, HelpCircle } from "lucide-react";
 import CodeEditor from "./CodeEditor";
 import LivePreview from "./LivePreview";
 import { isLoggedIn } from "@/lib/auth";
@@ -110,9 +110,8 @@ function CheckpointOverlay({ question, correctAnswer, onSolve, onDismiss }: Chec
             onClick={onDismiss}
             className="w-full mt-2 py-2 text-slate-500 hover:text-slate-700 text-xs font-semibold transition-colors"
           >
-            Để sau, xem lại bài
+            Đóng
           </button>
-          <p className="text-[10px] text-slate-400 mt-1">Cần trả lời đúng để sang bước tiếp theo.</p>
         </form>
       </div>
     </div>
@@ -265,13 +264,6 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
 
   // Load step into editor
   function loadStep(stepIndex: number, code: string | null, scroll = true) {
-    // Check if the target step is locked behind an unsolved checkpoint
-    const hasUnsolvedCheckpointBefore = checkpoints.some(
-      cp => cp.stepIndex < stepIndex && !completedCheckpoints.includes(cp.stepIndex)
-    );
-    if (hasUnsolvedCheckpointBefore) {
-      return;
-    }
 
     setActiveStepIndex(stepIndex);
     if (code !== null) {
@@ -335,7 +327,8 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
     };
   }, [lesson.id, allSteps, isLocked]);
 
-  const lockOnCheckpoint = (cp: CheckpointData) => {
+  // Thử thách Q&A chỉ mở khi người học bấm nút ở bước tương ứng (không tự bật khi cuộn)
+  const openCheckpoint = (cp: CheckpointData) => {
     setIsLocked(true);
     if (leftScrollContainerRef.current) {
       lockPositionRef.current = leftScrollContainerRef.current.scrollTop;
@@ -343,64 +336,25 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
     setActiveCheckpoint(cp);
   };
 
-  // Checkpoint của một bước bật khi người học đã chuyển sang bước sau mà chưa giải
-  // (không bật ngay khi vừa mở bài; mốc % trong bước được xử lý ở handleScroll)
-  useEffect(() => {
-    if (isLocked) return;
-    const pendingCheckpoint = checkpoints.find(
-      cp => cp.stepIndex < activeStepIndex && !completedCheckpoints.includes(cp.stepIndex)
-    );
-    if (pendingCheckpoint) lockOnCheckpoint(pendingCheckpoint);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStepIndex, checkpoints, completedCheckpoints, isLocked]);
-
-  // Checkpoint vừa bị đóng: không hỏi lại theo mốc % cho tới khi người học cuộn lên trên mốc
-  const dismissedStepRef = useRef<number | null>(null);
-
-  // Đã cuộn qua `percentage`% chiều cao thẻ của bước chứa checkpoint chưa?
-  const findReachedCheckpoint = (container: HTMLDivElement): CheckpointData | undefined => {
-    const containerTop = container.getBoundingClientRect().top;
-    const viewportMid = containerTop + container.clientHeight / 2;
-    return checkpoints.find((cp) => {
-      if (completedCheckpoints.includes(cp.stepIndex)) return false;
-      const card = document.getElementById(`step-card-${cp.stepIndex}`);
-      if (!card) return false;
-      const rect = card.getBoundingClientRect();
-      if (rect.height <= 0) return false;
-      const progressInCard = ((viewportMid - rect.top) / rect.height) * 100;
-      const reached = progressInCard >= Math.min(100, Math.max(0, cp.percentage));
-      if (dismissedStepRef.current === cp.stepIndex) {
-        if (!reached) dismissedStepRef.current = null; // đã cuộn lên trên mốc → lần sau hỏi lại
-        return false;
-      }
-      return reached;
-    });
-  };
-
-  // Đóng bảng câu hỏi: quay về bước chứa checkpoint để đọc lại.
-  // Vẫn phải trả lời đúng mới sang được bước sau (effect phía trên sẽ hỏi lại khi sang bước sau).
   const handleDismissCheckpoint = () => {
-    if (!activeCheckpoint) return;
-    const stepIndex = activeCheckpoint.stepIndex;
-    dismissedStepRef.current = stepIndex;
     setActiveCheckpoint(null);
     setIsLocked(false);
     lockPositionRef.current = null;
-    setActiveStepIndex(stepIndex);
+  };
 
-    const el = document.getElementById(`step-card-${stepIndex}`);
-    if (el) {
-      isAutoScrollingRef.current = true;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      setTimeout(() => {
-        isAutoScrollingRef.current = false;
-      }, 800);
-    }
+  // Số checkpoint đã giải liên tiếp từ đầu bài — lưu vào unlockedCheckpointIndex.
+  // Đếm theo tiền tố để khi tải lại không đánh dấu nhầm checkpoint chưa giải (giải không theo thứ tự thì phần sau sẽ hỏi lại).
+  const solvedPrefixCount = (solved: number[]) => {
+    let n = 0;
+    while (n < checkpoints.length && solved.includes(checkpoints[n].stepIndex)) n++;
+    return n;
   };
 
   const handleSolveCheckpoint = () => {
     if (!activeCheckpoint) return;
-    const newCompleted = [...completedCheckpoints, activeCheckpoint.stepIndex];
+    const newCompleted = completedCheckpoints.includes(activeCheckpoint.stepIndex)
+      ? completedCheckpoints
+      : [...completedCheckpoints, activeCheckpoint.stepIndex];
     setCompletedCheckpoints(newCompleted);
     setIsLocked(false);
     lockPositionRef.current = null;
@@ -409,7 +363,7 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
     // Save progress immediately (bỏ lần lưu bù đang chờ vì nó mang số checkpoint cũ)
     pendingProgressRef.current = null;
     if (idleSaveTimerRef.current) clearTimeout(idleSaveTimerRef.current);
-    saveProgress(scrollPercentage, newCompleted.length);
+    saveProgress(scrollPercentage, solvedPrefixCount(newCompleted));
   };
 
   const handleScroll = () => {
@@ -421,15 +375,6 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
       return;
     }
 
-    // Cuộn tới mốc % của checkpoint chưa giải → khóa cuộn và hỏi
-    if (!isLocked) {
-      const reached = findReachedCheckpoint(container);
-      if (reached) {
-        lockOnCheckpoint(reached);
-        return;
-      }
-    }
-
     const scrollTop = container.scrollTop;
     const scrollHeight = container.scrollHeight - container.clientHeight;
     const percentage = scrollHeight > 0 
@@ -437,7 +382,7 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
       : 0;
 
     setScrollPercentage(percentage);
-    pendingProgressRef.current = { percentage, completedCount: completedCheckpoints.length };
+    pendingProgressRef.current = { percentage, completedCount: solvedPrefixCount(completedCheckpoints) };
 
     // Throttled save progress
     const now = Date.now();
@@ -714,6 +659,8 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
                   {steps.map((step, stepIdx) => {
                     const isActive = stepIdx === activeStepIndex;
                     const stepCode = step.code;
+                    const stepCheckpoint = checkpoints.find((cp) => cp.stepIndex === stepIdx);
+                    const stepSolved = completedCheckpoints.includes(stepIdx);
                     const preClassName = `bg-slate-900 text-slate-100 p-4 rounded-xl whitespace-pre-wrap break-all border transition-colors ${
                       isActive ? "border-blue-400" : "border-slate-800"
                     }`;
@@ -781,6 +728,34 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
                             )}
                           </div>
                         </div>
+
+                        {/* Thử thách Q&A: chỉ mở khi người học bấm */}
+                        {stepCheckpoint && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openCheckpoint(stepCheckpoint);
+                            }}
+                            className={`mt-5 w-full flex items-center gap-3 px-4 py-3 rounded-2xl border-2 border-dashed text-left transition-colors ${
+                              stepSolved
+                                ? "border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50"
+                                : "border-blue-200 bg-blue-50/60 hover:bg-blue-50 hover:border-blue-300"
+                            }`}
+                          >
+                            <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${stepSolved ? "bg-emerald-100 text-emerald-600" : "bg-blue-100 text-blue-600"}`}>
+                              {stepSolved ? <CheckCircle2 size={18} /> : <HelpCircle size={18} />}
+                            </span>
+                            <span className="flex-1 min-w-0">
+                              <span className={`block text-[10px] font-extrabold uppercase tracking-wider ${stepSolved ? "text-emerald-600" : "text-blue-600"}`}>
+                                Thử thách Q&A
+                              </span>
+                              <span className="block text-xs text-slate-600 truncate">
+                                {stepSolved ? "Đã hoàn thành — bấm để làm lại" : "Bấm để trả lời câu hỏi của bước này"}
+                              </span>
+                            </span>
+                          </button>
+                        )}
                       </div>
                     );
                   })}

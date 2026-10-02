@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import parse, { domToReact, Element, DOMNode, HTMLReactParserOptions } from "html-react-parser";
 import { Course, Lesson } from "@/lib/types";
-import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw } from "lucide-react";
+import { BookOpen, MessageSquare, User, Clock, Users, Play, RotateCcw, X } from "lucide-react";
 import CodeEditor from "./CodeEditor";
 import LivePreview from "./LivePreview";
 import { isLoggedIn } from "@/lib/auth";
@@ -29,12 +29,22 @@ interface CheckpointOverlayProps {
   question: string;
   correctAnswer: string;
   onSolve: () => void;
+  onDismiss: () => void;
 }
 
-function CheckpointOverlay({ question, correctAnswer, onSolve }: CheckpointOverlayProps) {
+function CheckpointOverlay({ question, correctAnswer, onSolve, onDismiss }: CheckpointOverlayProps) {
   const [value, setValue] = useState("");
   const [isError, setIsError] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+
+  // Esc để đóng
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onDismiss();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onDismiss]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +58,16 @@ function CheckpointOverlay({ question, correctAnswer, onSolve }: CheckpointOverl
 
   return (
     <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-6">
-      <div className="bg-white/95 border border-white/60 p-8 rounded-3xl max-w-sm w-full shadow-2xl flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative bg-white/95 border border-white/60 p-8 rounded-3xl max-w-sm w-full shadow-2xl flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-200">
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Đóng câu hỏi"
+          title="Đóng (Esc)"
+          className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+        >
+          <X size={16} />
+        </button>
         <div className="bg-blue-50 text-blue-600 text-xs font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-4">
           Thử thách Q&A
         </div>
@@ -86,6 +105,14 @@ function CheckpointOverlay({ question, correctAnswer, onSolve }: CheckpointOverl
           >
             Kiểm tra đáp án
           </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="w-full mt-2 py-2 text-slate-500 hover:text-slate-700 text-xs font-semibold transition-colors"
+          >
+            Để sau, xem lại bài
+          </button>
+          <p className="text-[10px] text-slate-400 mt-1">Cần trả lời đúng để sang bước tiếp theo.</p>
         </form>
       </div>
     </div>
@@ -145,18 +172,16 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
       .then((res) => {
         completedSentRef.current = res.completed;
         if (res) {
-          const completedCount = res.unlockedCheckpointIndex;
-          const completedList: number[] = [];
-          for (let i = 0; i < completedCount; i++) {
-            completedList.push(i);
-          }
-          setCompletedCheckpoints(completedList);
+          // unlockedCheckpointIndex = số checkpoint đã giải (theo thứ tự) → đổi sang stepIndex của chúng,
+          // vì completedCheckpoints lưu stepIndex (giống handleSolveCheckpoint)
+          const completedCount = res.completed ? checkpoints.length : res.unlockedCheckpointIndex;
+          setCompletedCheckpoints(checkpoints.slice(0, completedCount).map((cp) => cp.stepIndex));
           setIsLocked(false);
 
-          // Restore scroll position
+          // Khôi phục vị trí cuộn để học tiếp; bài đã hoàn thành thì mở lại từ đầu
           setTimeout(() => {
             const container = leftScrollContainerRef.current;
-            if (container && res.lastScrollPercentage > 0) {
+            if (container && !res.completed && res.lastScrollPercentage > 0) {
               const scrollHeight = container.scrollHeight - container.clientHeight;
               container.scrollTop = (res.lastScrollPercentage / 100) * scrollHeight;
               setScrollPercentage(res.lastScrollPercentage);
@@ -310,22 +335,68 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
     };
   }, [lesson.id, allSteps, isLocked]);
 
-  // Checkpoint detection and locking
+  const lockOnCheckpoint = (cp: CheckpointData) => {
+    setIsLocked(true);
+    if (leftScrollContainerRef.current) {
+      lockPositionRef.current = leftScrollContainerRef.current.scrollTop;
+    }
+    setActiveCheckpoint(cp);
+  };
+
+  // Checkpoint của một bước bật khi người học đã chuyển sang bước sau mà chưa giải
+  // (không bật ngay khi vừa mở bài; mốc % trong bước được xử lý ở handleScroll)
   useEffect(() => {
     if (isLocked) return;
-
     const pendingCheckpoint = checkpoints.find(
-      cp => cp.stepIndex <= activeStepIndex && !completedCheckpoints.includes(cp.stepIndex)
+      cp => cp.stepIndex < activeStepIndex && !completedCheckpoints.includes(cp.stepIndex)
     );
-
-    if (pendingCheckpoint) {
-      setIsLocked(true);
-      if (leftScrollContainerRef.current) {
-        lockPositionRef.current = leftScrollContainerRef.current.scrollTop;
-      }
-      setActiveCheckpoint(pendingCheckpoint);
-    }
+    if (pendingCheckpoint) lockOnCheckpoint(pendingCheckpoint);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStepIndex, checkpoints, completedCheckpoints, isLocked]);
+
+  // Checkpoint vừa bị đóng: không hỏi lại theo mốc % cho tới khi người học cuộn lên trên mốc
+  const dismissedStepRef = useRef<number | null>(null);
+
+  // Đã cuộn qua `percentage`% chiều cao thẻ của bước chứa checkpoint chưa?
+  const findReachedCheckpoint = (container: HTMLDivElement): CheckpointData | undefined => {
+    const containerTop = container.getBoundingClientRect().top;
+    const viewportMid = containerTop + container.clientHeight / 2;
+    return checkpoints.find((cp) => {
+      if (completedCheckpoints.includes(cp.stepIndex)) return false;
+      const card = document.getElementById(`step-card-${cp.stepIndex}`);
+      if (!card) return false;
+      const rect = card.getBoundingClientRect();
+      if (rect.height <= 0) return false;
+      const progressInCard = ((viewportMid - rect.top) / rect.height) * 100;
+      const reached = progressInCard >= Math.min(100, Math.max(0, cp.percentage));
+      if (dismissedStepRef.current === cp.stepIndex) {
+        if (!reached) dismissedStepRef.current = null; // đã cuộn lên trên mốc → lần sau hỏi lại
+        return false;
+      }
+      return reached;
+    });
+  };
+
+  // Đóng bảng câu hỏi: quay về bước chứa checkpoint để đọc lại.
+  // Vẫn phải trả lời đúng mới sang được bước sau (effect phía trên sẽ hỏi lại khi sang bước sau).
+  const handleDismissCheckpoint = () => {
+    if (!activeCheckpoint) return;
+    const stepIndex = activeCheckpoint.stepIndex;
+    dismissedStepRef.current = stepIndex;
+    setActiveCheckpoint(null);
+    setIsLocked(false);
+    lockPositionRef.current = null;
+    setActiveStepIndex(stepIndex);
+
+    const el = document.getElementById(`step-card-${stepIndex}`);
+    if (el) {
+      isAutoScrollingRef.current = true;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => {
+        isAutoScrollingRef.current = false;
+      }, 800);
+    }
+  };
 
   const handleSolveCheckpoint = () => {
     if (!activeCheckpoint) return;
@@ -348,6 +419,15 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
     if (isLocked && lockPositionRef.current !== null) {
       container.scrollTop = lockPositionRef.current;
       return;
+    }
+
+    // Cuộn tới mốc % của checkpoint chưa giải → khóa cuộn và hỏi
+    if (!isLocked) {
+      const reached = findReachedCheckpoint(container);
+      if (reached) {
+        lockOnCheckpoint(reached);
+        return;
+      }
     }
 
     const scrollTop = container.scrollTop;
@@ -714,6 +794,7 @@ export default function LessonContent({ lesson, course, activeTab, onTabChange, 
                 question={activeCheckpoint.question}
                 correctAnswer={activeCheckpoint.correctAnswer}
                 onSolve={handleSolveCheckpoint}
+                onDismiss={handleDismissCheckpoint}
               />
             )}
           </div>

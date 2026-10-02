@@ -371,7 +371,7 @@ function InstructorDashboardContent() {
                         {course.level}
                       </span>
                       <span className="text-[8px] bg-blue-50 text-blue-600 border border-blue-150 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider shrink-0">
-                        {formatCoursePrice(course.price ?? 0)} · {course.totalLessons} bài
+                        {formatCoursePrice(course.price) ? `${formatCoursePrice(course.price)} · ` : ""}{course.totalLessons} bài
                       </span>
                       {course.status && (
                         <span className={`text-[8px] border px-1.5 py-0.5 rounded font-bold uppercase tracking-wider shrink-0 ${STATUS_BADGE[course.status]}`}>

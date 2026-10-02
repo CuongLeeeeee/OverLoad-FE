@@ -32,7 +32,7 @@ export default function CourseReviewsPage() {
     try {
       const list = await adminApi.getPendingCourses();
       setCourses(list);
-      setPriceDrafts(Object.fromEntries(list.map((c) => [c.id, String(c.price ?? 0)])));
+      setPriceDrafts(Object.fromEntries(list.map((c) => [c.id, (c.price == null ? "" : String(c.price))])));
     } catch (err: any) {
       setErrorMsg(err.message || "Không thể tải hàng đợi duyệt.");
     } finally {
@@ -63,7 +63,7 @@ export default function CourseReviewsPage() {
     try {
       const updated = await adminApi.setCoursePrice(course.id, price);
       setCourses((prev) => prev.map((c) => (c.id === course.id ? { ...c, ...updated, price: updated?.price ?? price } : c)));
-      triggerSuccess(`Đã đặt giá "${course.title}": ${formatCoursePrice(price)}`);
+      triggerSuccess(`Đã đặt giá "${course.title}": ${formatCoursePrice(price) ?? price}`);
     } catch (err: any) {
       setErrorMsg(err.message || "Không thể đặt giá.");
     } finally {
@@ -74,7 +74,7 @@ export default function CourseReviewsPage() {
   const handleApprove = async (course: Course) => {
     if (!(await confirm({
       title: `Duyệt "${course.title}"?`,
-      message: `Khóa học sẽ được xuất bản với giá ${formatCoursePrice(course.price ?? 0)}.`,
+      message: formatCoursePrice(course.price) ? `Khóa học sẽ được xuất bản với giá ${formatCoursePrice(course.price)}.` : "Khóa học chưa có giá — hãy đặt giá trước nếu là khóa trả phí.",
       confirmLabel: "Duyệt",
     }))) return;
     setBusyId(course.id);
@@ -155,7 +155,7 @@ export default function CourseReviewsPage() {
           {courses.map((course) => {
             const busy = busyId === course.id;
             const pending = course.status === "PendingReview";
-            const priceChanged = priceDrafts[course.id] !== String(course.price ?? 0);
+            const priceChanged = priceDrafts[course.id] !== (course.price == null ? "" : String(course.price));
             return (
               <div key={course.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row md:items-center gap-4">
                 <div className="flex-1 min-w-0">

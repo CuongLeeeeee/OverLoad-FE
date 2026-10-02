@@ -6,6 +6,7 @@ Phát hiện khi kiểm thử frontend nhánh `TopUpAndInstructor` với API v1.
 
 | Mức | Vấn đề | Chi tiết |
 |---|---|---|
+| Cao | `/courses/*` chưa trả `price` | Thông báo BE nói `price` đã có trong mọi endpoint `/courses/*`, nhưng API đang deploy (kiểm tra 02/10/2026) **không có field `price`** ở `GET /courses`, `GET /courses/category/{c}`, `GET /courses/{id}` (field `status` thì đã có). FE tạm không hiển thị giá khi thiếu field; khóa trả phí chỉ biết là trả phí khi enroll bị 400. |
 | Trung bình | Lọc danh mục phân biệt hoa thường | `GET /courses/category/frontend` → `items: []`, chỉ `/Frontend` có dữ liệu. FE đã tự gửi đúng hoa thường, nhưng BE nên so sánh không phân biệt. |
 | Thấp | Thông báo lỗi bằng tiếng Anh | Vd `POST /courses/{id}/enroll` → 400 "This is a paid course...". FE hiển thị nguyên văn `message`. |
 
@@ -29,5 +30,5 @@ Phát hiện khi kiểm thử frontend nhánh `TopUpAndInstructor` với API v1.
 - `POST /chat` trả 500 → đã thêm `GEMINI_API_KEY`, lỗi AI giờ trả 503.
 - Revenue stats không tính giao dịch qua ví → đã sửa.
 - Slug tiếng Việt (`xa-c`) → `xoa-duoc`.
-- Course thiếu `price` → đã có `price` + `PUT /admin/courses/{id}/price`.
+- `PUT /admin/courses/{id}/price` đã có (nhưng `price` chưa xuất hiện trong response, xem mục Còn mở).
 - `/me/courses` trả khóa nháp → chỉ trả Published.

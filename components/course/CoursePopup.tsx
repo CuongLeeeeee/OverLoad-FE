@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, BookOpen, Loader2, ShoppingCart, Zap } from "lucide-react";
-import { Course, getCourseColor, LEVEL_LABEL, formatCoursePrice } from "@/lib/types";
+import { Course, getCourseColor, LEVEL_LABEL, formatCoursePrice, hasKnownPrice } from "@/lib/types";
 import { coursesApi, startCheckout, isApiError } from "@/lib/api";
 import { getUser } from "@/lib/auth";
 
@@ -18,7 +18,9 @@ export default function CoursePopup({ course, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   // Khóa trả phí mà user chưa có PRO → phải mua qua thanh toán (BE cũng trả 400 nếu gọi enroll)
-  const [needsPurchase, setNeedsPurchase] = useState(() => course.price > 0 && !getUser()?.isPro);
+  // Chưa biết giá → thử enroll, BE trả 400 nếu là khóa trả phí
+  const [needsPurchase, setNeedsPurchase] = useState(() => hasKnownPrice(course.price) && course.price > 0 && !getUser()?.isPro);
+  const priceLabel = formatCoursePrice(course.price);
 
   const gradient = getCourseColor(course);
 
@@ -88,7 +90,7 @@ export default function CoursePopup({ course, onClose }: Props) {
           <h2 className="text-lg font-bold text-slate-800 mb-1">{course.title}</h2>
           <div className="flex justify-between items-center mb-3">
             <span className="text-xs font-semibold text-slate-500">{LEVEL_LABEL[course.level] ?? course.level}</span>
-            <span className="text-sm font-bold text-blue-600">{formatCoursePrice(course.price)}</span>
+            {priceLabel && <span className="text-sm font-bold text-blue-600">{priceLabel}</span>}
           </div>
 
           <p className="text-sm text-slate-500 mb-4 leading-relaxed line-clamp-3">

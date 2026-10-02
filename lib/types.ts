@@ -163,7 +163,9 @@ export interface Course {
   isPublished: boolean; // = status === "Published"
   rejectionReason: string | null; // chỉ có khi Rejected
   instructorId: number;
-  price: number; // VND, 0 = miễn phí (Admin đặt qua PUT /admin/courses/{id}/price)
+  // VND, 0 = miễn phí (Admin đặt qua PUT /admin/courses/{id}/price).
+  // Optional: API đang deploy chưa trả field này ở /courses/* → coi như chưa biết giá.
+  price?: number | null;
   totalDurationMinutes: number;
   totalLessons: number;
   createdAt: string;
@@ -384,8 +386,17 @@ export const LEVEL_LABEL: Record<CourseLevel, string> = {
   Advanced: "Nâng cao",
 };
 
-/** "Miễn phí" hoặc "199.000đ" — theo price thật của khóa học (không suy ra từ level) */
-export function formatCoursePrice(price: number): string {
+/** BE có trả giá không (một số endpoint hiện chưa trả `price`) */
+export function hasKnownPrice(price: number | null | undefined): price is number {
+  return typeof price === "number" && Number.isFinite(price);
+}
+
+/**
+ * "Miễn phí" hoặc "199.000đ" theo price thật của khóa học (không suy ra từ level).
+ * Trả null khi không biết giá — KHÔNG hiển thị "Miễn phí" cho khóa chưa rõ giá.
+ */
+export function formatCoursePrice(price: number | null | undefined): string | null {
+  if (!hasKnownPrice(price)) return null;
   return price > 0 ? `${price.toLocaleString("vi-VN")}đ` : "Miễn phí";
 }
 
